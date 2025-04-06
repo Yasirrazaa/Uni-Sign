@@ -9,7 +9,7 @@ import numpy as np
 WER_COST_DEL = 3
 WER_COST_INS = 3
 WER_COST_SUB = 4
-
+ 
 
 def chrf(references, hypotheses):
     """
@@ -80,7 +80,7 @@ def sequence_accuracy(references, hypotheses):
     return (correct_sequences / len(hypotheses)) * 100 if hypotheses else 0.0
 
 
-# implement sltunet rouge eval
+# implement sltunet rouge eval  
 def rouge_deprecated(references, hypotheses, level='word'):
     #beta 1.2
     rouge_score = 0
@@ -89,7 +89,7 @@ def rouge_deprecated(references, hypotheses, level='word'):
         #split word
         references = [' '.join(list(r)) for r in references]
         hypotheses = [' '.join(list(r)) for r in hypotheses]
-
+        
     for h, r in zip(hypotheses, references):
         rouge_score += mscoco_rouge.calc_score(hypotheses=[h], references=[r]) / n_seq
 
@@ -249,7 +249,7 @@ def get_alignment(r, h, d):
         alignlist[::-1],
         {"align_ref": align_ref, "align_hyp": align_hyp, "alignment": alignment},
     )
-
+    
 def sableu(references, hypotheses, tokenizer):
     """
     Sacrebleu (with tokenization)
@@ -264,7 +264,7 @@ def sableu(references, hypotheses, tokenizer):
     scores = {}
     for n in range(len(bleu_scores)):
         scores["bleu" + str(n + 1)] = bleu_scores[n]
-
+        
     return scores
 
 def translation_performance(txt_ref, txt_hyp):
@@ -272,88 +272,33 @@ def translation_performance(txt_ref, txt_hyp):
     rouge=SLT_Rouge()
     scores = rouge.get_scores(txt_hyp, txt_ref, avg=True)
     scores['rouge-l']['f'] = scores['rouge-l']['f']*100
-
+    
     tokenizer_args = '13a'
     # print('Signature: BLEU+case.mixed+numrefs.1+smooth.exp+tok.%s+version.1.4.2' % tokenizer_args)
     sableu_dict = sableu(references=txt_ref, hypotheses=txt_hyp, tokenizer=tokenizer_args)
     # print('BLEU', sableu_dict)
     # print('Signature: chrF2+case.mixed+numchars.6+numrefs.1+space.False+version.1.4.2')
     # print('Chrf', chrf(references=txt_ref, hypotheses=txt_hyp))
-
+   
     print(sableu_dict)
     print(f"Rough: {scores['rouge-l']['f']:.2f}")
-
+   
     # res = []
     # for n in range(4):
     #     res.append(f"{sableu_dict['bleu' + str(n + 1)]:.2f}")
     # res.append(f"{scores['rouge-l']['f']:.2f}")
-
+    
     # print(" & ".join(res))
 
     return sableu_dict, float(scores['rouge-l']['f'])
 
-def compute_topk_accuracy(logits, labels, k_values=(1, 3, 5, 7, 10)):
-    """
-    Compute top-k accuracy for multiple k values
-    Args:
-        logits: torch.Tensor of shape (batch_size, num_classes)
-        labels: torch.Tensor of shape (batch_size,)
-        k_values: tuple of k values to compute
-    Returns:
-        dict: Dictionary containing top-k accuracies for both PI and PC
-    """
-    batch_size = logits.size(0)
-    max_k = max(k_values)
-
-    # Get top-k predictions
-    _, pred = logits.topk(max_k, 1, True, True)
-    pred = pred.t()  # transpose to shape (k, batch_size)
-    correct = pred.eq(labels.view(1, -1).expand_as(pred))
-
-    # Initialize results dictionary
-    results = {}
-
-    # Per Instance (PI) accuracy
-    for k in k_values:
-        correct_k = correct[:k].float().sum(0)  # Get correct predictions for each instance
-        results[f'top{k}_acc_pi'] = correct_k.mul_(100.0 / 1).cpu().numpy()  # Accuracy per instance
-        results[f'top{k}_acc_pi_avg'] = correct_k.mean().item()
-
-    # Per Class (PC) accuracy
-    unique_labels = torch.unique(labels)
-    for k in k_values:
-        class_accuracies = []
-        for cls in unique_labels:
-            cls_mask = labels == cls
-            if cls_mask.any():
-                cls_correct = correct[:k, cls_mask].float().sum(0)
-                cls_acc = cls_correct.mul_(100.0 / cls_mask.sum().item()).mean().item()
-                class_accuracies.append(cls_acc)
-        results[f'top{k}_acc_pc'] = np.array(class_accuracies)
-        results[f'top{k}_acc_pc_avg'] = np.mean(class_accuracies)
-
-    return results
-
 def islr_performance(txt_ref, txt_hyp):
-    """
-    Calculate ISLR performance metrics.
-
-    Args:
-        txt_ref: List of reference labels (ground truth)
-        txt_hyp: List of hypothesis labels (predictions)
-
-    Returns:
-        top1_acc_pi: Per-instance accuracy (percentage of correct predictions)
-        top1_acc_pc: Per-class accuracy (average accuracy across classes)
-    """
-    # Calculate per-instance accuracy
     true_sample = 0
     for tgt_pre, tgt_ref in zip(txt_hyp, txt_ref):
         true_sample += (tgt_pre == tgt_ref)
+    
+    top1_acc_pi = true_sample / len(txt_hyp) * 100
 
-    top1_acc_pi = true_sample / len(txt_hyp) * 100 if len(txt_hyp) > 0 else 0.0
-
-    # Calculate per-class accuracy
     gt_dict = {}
     pred_dict = {}
     for tgt_pre, tgt_ref in zip(txt_hyp, txt_ref):
@@ -367,33 +312,83 @@ def islr_performance(txt_ref, txt_hyp):
     mean_acc_pc = []
     for key in gt_dict.keys():
         mean_acc_pc.append(pred_dict[key] / gt_dict[key])
-    top1_acc_pc = np.array(mean_acc_pc).mean() * 100 if mean_acc_pc else 0.0
+    top1_acc_pc = np.array(mean_acc_pc).mean() * 100
 
-    print(f"top1_acc_pi: {top1_acc_pi:.2f}%")
-    print(f"top1_acc_pc: {top1_acc_pc:.2f}%")
-
+    print(f"top1_acc_pi: {top1_acc_pi:.2f}")
+    print(f"top1_acc_pc: {top1_acc_pc:.2f}")
     return top1_acc_pi, top1_acc_pc
 
 
-def islr_performance_tensor(logits, labels):
+def islr_performance_topk(logits, target_token_ids, ks=[1, 3, 5, 7, 10]):
     """
-    Compute comprehensive ISLR performance metrics
+    Calculates both per-instance and per-class Top-K accuracy for ISLR.
+
     Args:
-        logits: Model predictions (batch_size, num_classes)
-        labels: Ground truth labels (batch_size,)
+        logits (torch.Tensor): Logits from the model for the first prediction step.
+                               Shape: (batch_size, vocab_size)
+        target_token_ids (torch.Tensor): Ground truth token IDs for the target class label.
+                                         Shape: (batch_size,)
+        ks (list): List of integers for K values.
+
     Returns:
-        dict: Dictionary containing all metrics
+        dict: Dictionary mapping metric names to their values:
+              - 'topk_acc_pi': per-instance accuracy for each K
+              - 'topk_acc_pc': per-class accuracy for each K
     """
-    k_values = (1, 3, 5, 7, 10)
-    metrics = compute_topk_accuracy(logits, labels, k_values)
+    max_k = max(ks)
+    batch_size = logits.size(0)
+    
+    # Ensure inputs are on same device and correct type
+    target_token_ids = target_token_ids.to(device=logits.device, dtype=torch.long)
 
-    # Print detailed results
-    print("\nPer Instance (PI) Accuracies:")
-    for k in k_values:
-        print(f"Top-{k} Accuracy: {metrics[f'top{k}_acc_pi_avg']:.2f}%")
-
-    print("\nPer Class (PC) Accuracies:")
-    for k in k_values:
-        print(f"Top-{k} Accuracy: {metrics[f'top{k}_acc_pc_avg']:.2f}%")
-
-    return metrics
+    # Get top K predictions for each sample
+    _, topk_indices = torch.topk(logits.float(), max_k, dim=-1)  # Shape: (batch_size, max_k)
+    
+    # Dictionary to store accuracies
+    accuracies = {}
+    
+    # Per-instance calculation
+    # Compare target with top K predictions
+    target_expanded = target_token_ids.unsqueeze(1).expand_as(topk_indices[:, :max_k])
+    correct_matrix = (topk_indices[:, :max_k] == target_expanded)  # Shape: (batch_size, max_k)
+    
+    for k in ks:
+        # Check if target is in top K predictions for each sample
+        correct_k = correct_matrix[:, :k].any(dim=1)  # Shape: (batch_size,)
+        accuracy_k = (correct_k.float().sum() / batch_size) * 100
+        accuracies[f'top{k}_acc_pi'] = accuracy_k.item()
+    
+    # Per-class calculation
+    # Create dictionaries to track per-class statistics
+    class_correct = {}  # {class_id: {k: correct_count}}
+    class_total = {}   # {class_id: total_count}
+    
+    for i in range(batch_size):
+        target = target_token_ids[i].item()
+        if target not in class_total:
+            class_total[target] = 0
+            class_correct[target] = {k: 0 for k in ks}
+        class_total[target] += 1
+        
+        # Update correct counts for each K
+        for k in ks:
+            if correct_matrix[i, :k].any():
+                class_correct[target][k] += 1
+    
+    # Calculate per-class accuracies for each K
+    for k in ks:
+        class_accuracies = []
+        for class_id in class_total:
+            if class_total[class_id] > 0:  # Avoid division by zero
+                class_acc = (class_correct[class_id][k] / class_total[class_id]) * 100
+                class_accuracies.append(class_acc)
+        
+        # Average across all classes
+        accuracies[f'top{k}_acc_pc'] = float(sum(class_accuracies)) / len(class_accuracies)
+    
+    # Print both per-instance and per-class accuracies
+    print("\nTop-K Accuracies (Per Instance):", {k: accuracies[f'top{k}_acc_pi'] for k in ks})
+    print("Top-K Accuracies (Per Class):", {k: accuracies[f'top{k}_acc_pc'] for k in ks})
+    
+    return accuracies
+   
