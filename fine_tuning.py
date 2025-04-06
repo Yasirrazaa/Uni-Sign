@@ -483,12 +483,31 @@ def evaluate(args, data_loader, model, model_without_ddp, phase):
                         # Add prediction
                         batch_preds.append(str(pred_idx))
 
-                        # For WLASL, we use the video ID as the reference
-                        # This matches the reference implementation
+                        # For WLASL, the gloss should already be a class index (0-1999)
                         if args.dataset == 'WLASL':
-                            # Use the video ID as the reference
-                            # The gloss is already the video ID from the dataset
-                            batch_refs.append(gloss)
+                            # The gloss should be a numeric class index
+                            try:
+                                # Try to convert gloss to integer
+                                class_idx = int(gloss)
+                                # Ensure it's within valid range
+                                if 0 <= class_idx < args.num_classes:
+                                    batch_refs.append(str(class_idx))
+                                else:
+                                    # Default to 0 if out of range
+                                    print(f"Warning: Class index {class_idx} out of range (0-{args.num_classes-1})")
+                                    batch_refs.append('0')
+                            except ValueError:
+                                # If gloss is not a number, try to map it using gloss_to_idx
+                                if hasattr(model_without_ddp, 'gloss_to_idx') and gloss in model_without_ddp.gloss_to_idx:
+                                    batch_refs.append(str(model_without_ddp.gloss_to_idx[gloss]))
+                                else:
+                                    # Default to 0 if mapping fails
+                                    print(f"Warning: Could not convert gloss '{gloss}' to class index")
+                                    batch_refs.append('0')
+
+                            # Print debug information for the first few samples
+                            if len(tgt_pres) < 10:
+                                print(f"Gloss: '{gloss}', Predicted class: {pred_idx}, Reference class: {batch_refs[-1]}")
                         else:
                             # For other datasets, try to map gloss to index
                             if gloss in model_without_ddp.gloss_to_idx:
