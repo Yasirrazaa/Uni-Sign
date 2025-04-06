@@ -479,6 +479,11 @@ class S2T_Dataset(Base_Dataset):
         else:
             gloss = ''
 
+        # For ISLR task, make sure text is also set to gloss
+        # This ensures gt_sentence will be set correctly in collate_fn
+        if self.args.task == "ISLR":
+            text = gloss
+
         name_sample = sample['name']
         pose_sample, support_rgb_dict = self.load_pose(sample['video_path'])
 

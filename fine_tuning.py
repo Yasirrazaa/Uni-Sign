@@ -427,8 +427,31 @@ def evaluate(args, data_loader, model, model_without_ddp, phase):
     tgt_pres = []
     tgt_refs = []
 
+    # Debug information
+    print("\nDEBUG - Starting evaluation")
+
     with torch.no_grad():
         for src_input, tgt_input in metric_logger.log_every(data_loader, 10, header):
+            # Debug information for first batch
+            if len(tgt_refs) == 0:
+                print("\nDEBUG - First batch information:")
+                print(f"Keys in src_input: {list(src_input.keys())}")
+                print(f"Keys in tgt_input: {list(tgt_input.keys())}")
+
+                if 'gt_sentence' in tgt_input:
+                    print("\nSample gt_sentence values:")
+                    for i, sent in enumerate(tgt_input['gt_sentence'][:5]):
+                        print(f"  {i}: '{sent}'")
+
+                if 'gt_gloss' in tgt_input:
+                    print("\nSample gt_gloss values:")
+                    for i, gloss in enumerate(tgt_input['gt_gloss'][:5]):
+                        print(f"  {i}: '{gloss}'")
+
+                if 'name_batch' in src_input:
+                    print("\nSample video names:")
+                    for i, name in enumerate(src_input['name_batch'][:5]):
+                        print(f"  {i}: '{name}'")
             # Move inputs to device
             src_input = {k: v.cuda() if isinstance(v, torch.Tensor) else v
                         for k, v in src_input.items()}
@@ -436,37 +459,67 @@ def evaluate(args, data_loader, model, model_without_ddp, phase):
             # Forward pass
             stack_out = model(src_input, tgt_input)
 
-            total_loss = stack_out['loss']
-            metric_logger.update(loss=total_loss.item())
+            # Update loss if available
+            if 'loss' in stack_out and stack_out['loss'] is not None:
+                total_loss = stack_out['loss']
+                metric_logger.update(loss=total_loss.item())
 
-            # Generate output - exactly match reference implementation
-            output = model_without_ddp.generate(stack_out,
-                                            max_new_tokens=100,
-                                            num_beams=4,
-                    )
+            # Check if stack_out has the required keys for generate
+            if 'inputs_embeds' in stack_out and 'attention_mask' in stack_out:
+                try:
+                    # Generate output - exactly match reference implementation
+                    output = model_without_ddp.generate(stack_out,
+                                                    max_new_tokens=100,
+                                                    num_beams=4,
+                            )
 
-            # Add predictions and references to lists
-            for i in range(len(output)):
-                tgt_pres.append(output[i])
-                if args.task == "ISLR":
-                    tgt_refs.append(tgt_input['gt_gloss'][i])
-                else:
-                    tgt_refs.append(tgt_input['gt_sentence'][i])
+                    # Add predictions and references to lists
+                    for i in range(len(output)):
+                        tgt_pres.append(output[i])
+                        # Always use gt_sentence for references, regardless of task
+                        # This matches the reference implementation
+                        tgt_refs.append(tgt_input['gt_sentence'][i])
+                except Exception as e:
+                    print(f"Error during generation: {e}")
+                    # For ISLR task, use logits directly
+                    if args.task == "ISLR" and 'logits' in stack_out:
+                        logits = stack_out['logits']
+                        _, pred_indices = logits.topk(1, dim=1)
+
+                        for i, pred_idx in enumerate(pred_indices.squeeze().cpu().tolist()):
+                            if not isinstance(pred_indices.squeeze().cpu().tolist(), list):
+                                pred_idx = pred_indices.squeeze().cpu().tolist()
+                            tgt_pres.append(str(pred_idx))
+                            tgt_refs.append(tgt_input['gt_sentence'][i])
+            else:
+                # For ISLR task, use logits directly
+                if args.task == "ISLR" and 'logits' in stack_out:
+                    logits = stack_out['logits']
+                    _, pred_indices = logits.topk(1, dim=1)
+
+                    for i, pred_idx in enumerate(pred_indices.squeeze().cpu().tolist()):
+                        if not isinstance(pred_indices.squeeze().cpu().tolist(), list):
+                            pred_idx = pred_indices.squeeze().cpu().tolist()
+                        tgt_pres.append(str(pred_idx))
+                        tgt_refs.append(tgt_input['gt_sentence'][i])
 
 
 
     # Process outputs according to task
-    tokenizer = model_without_ddp.mt5_tokenizer
-    padding_value = tokenizer.eos_token_id
+    if len(tgt_pres) > 0 and isinstance(tgt_pres[0], torch.Tensor):
+        # If predictions are tensors (from generate method), decode them
+        tokenizer = model_without_ddp.mt5_tokenizer
+        padding_value = tokenizer.eos_token_id
 
-    # Pad the first prediction to ensure consistent processing
-    if len(tgt_pres) > 0:
-        pad_tensor = torch.ones(150-len(tgt_pres[0])).cuda() * padding_value
-        tgt_pres[0] = torch.cat((tgt_pres[0], pad_tensor.long()), dim=0)
+        # Pad the first prediction to ensure consistent processing
+        if len(tgt_pres) > 0:
+            pad_tensor = torch.ones(150-len(tgt_pres[0])).cuda() * padding_value
+            tgt_pres[0] = torch.cat((tgt_pres[0], pad_tensor.long()), dim=0)
 
-    # Pad all predictions and decode them
-    tgt_pres = pad_sequence(tgt_pres, batch_first=True, padding_value=padding_value)
-    tgt_pres = tokenizer.batch_decode(tgt_pres, skip_special_tokens=True)
+        # Pad all predictions and decode them
+        tgt_pres = pad_sequence(tgt_pres, batch_first=True, padding_value=padding_value)
+        tgt_pres = tokenizer.batch_decode(tgt_pres, skip_special_tokens=True)
+    # If predictions are already strings (from logits), no need to decode
 
     # Compute metrics based on task
     if args.task == "ISLR":
