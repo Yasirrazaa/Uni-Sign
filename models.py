@@ -24,6 +24,19 @@ class TemporalAttention(nn.Module):
     def forward(self, x, mask=None):
         # x shape: [B, T, C]
         x_t = x.transpose(0, 1)  # [T, B, C]
+
+        # Handle the mask for MultiheadAttention
+        # PyTorch expects attn_mask to be of shape (T, T) or (B*num_heads, T, T)
+        if mask is not None:
+            # If mask is 3D with batch dimension, we need to remove it
+            if mask.dim() == 3:
+                # Take the first batch element as they should all be the same causal mask
+                mask = mask[0]
+
+            # Make sure mask is on the correct device
+            mask = mask.to(x.device)
+
+        # Apply attention
         attn_output, _ = self.attention(x_t, x_t, x_t, attn_mask=mask)
         attn_output = self.dropout(attn_output)
         attn_output = attn_output.transpose(0, 1)  # [B, T, C]
@@ -289,6 +302,8 @@ class Uni_Sign(nn.Module):
         # Ensure T is a scalar value
         if isinstance(T, torch.Tensor):
             T = T.item()
+        # Create a mask where future positions are masked (set to True)
+        # PyTorch attention masks work with False = attend, True = mask out
         mask = torch.triu(torch.ones(T, T), diagonal=1).bool()
         return mask
 
@@ -361,10 +376,13 @@ class Uni_Sign(nn.Module):
         # Apply future masking if enabled
         future_mask = None
         if hasattr(self.args, 'use_future_mask') and self.args.use_future_mask:
-            B, T = src_input['attention_mask'].shape
+            # Create a causal mask for temporal attention
+            # This will be used directly in the TemporalAttention module
+            T = src_input['attention_mask'].shape[1]  # Sequence length
             future_mask = self.create_future_mask(T).to(src_input['attention_mask'].device)
-            future_mask = future_mask[None, :, :].expand(B, -1, -1)
-            src_input['attention_mask'] = src_input['attention_mask'].float().unsqueeze(-1) * (~future_mask).float()
+
+            # We don't modify the attention_mask here anymore
+            # The mask will be properly handled in the TemporalAttention module
 
         # RGB branch forward
         if self.args.rgb_support:

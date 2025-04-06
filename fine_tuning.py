@@ -461,8 +461,25 @@ def evaluate(args, data_loader, model, model_without_ddp, phase):
 
                     # Print sample raw labels for debugging
                     print("\nRaw labels sample:")
-                    for i, gloss in enumerate(tgt_input['gt_gloss'][:5]):
+                    for i, gloss in enumerate(tgt_input['gt_gloss'][:10]):
                         print(f"  {i}: '{gloss}'")
+
+                    # Check if all labels are empty
+                    empty_count = sum(1 for g in tgt_input['gt_gloss'] if not g or not g.strip())
+                    if empty_count > 0:
+                        print(f"Warning: Found {empty_count} empty labels out of {len(tgt_input['gt_gloss'])}")
+
+                    # For WLASL dataset, try to extract class IDs from video paths
+                    if args.dataset == 'WLASL' and 'name_batch' in src_input:
+                        print("\nVideo paths sample:")
+                        for i, name in enumerate(src_input['name_batch'][:5]):
+                            print(f"  {i}: '{name}'")
+                            try:
+                                # Extract class ID from path (first part before /)
+                                class_id = int(name.split('/')[0])
+                                print(f"    Class ID: {class_id}")
+                            except (ValueError, IndexError):
+                                print(f"    Could not extract class ID")
 
                     for gloss in tgt_input['gt_gloss']:
                         # Try direct mapping first
