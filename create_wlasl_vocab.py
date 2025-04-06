@@ -38,21 +38,43 @@ def main():
 
             idx, gloss = parts
             idx = int(idx)
+
+            # Add the primary mapping: gloss -> idx
             gloss_to_idx[gloss] = idx
+
+            # Add the string representation of the index as a key too
+            # This helps with datasets that use numeric labels
+            gloss_to_idx[str(idx)] = idx
+
+            # Store the reverse mapping for reference
             idx_to_gloss[idx] = gloss
+
+            # Add lowercase version for case-insensitive matching
+            gloss_to_idx[gloss.lower()] = idx
 
     # Save vocabulary to file
     with open(args.output_path, 'w') as f:
         json.dump(gloss_to_idx, f, indent=2)
 
-    print(f"Created vocabulary with {len(gloss_to_idx)} unique glosses")
+    # Also save the reverse mapping for debugging
+    reverse_path = args.output_path.replace('.json', '_reverse.json')
+    with open(reverse_path, 'w') as f:
+        json.dump(idx_to_gloss, f, indent=2)
+
+    print(f"Created vocabulary with {len(idx_to_gloss)} unique classes and {len(gloss_to_idx)} mappings")
     print(f"Saved vocabulary to {args.output_path}")
+    print(f"Saved reverse mapping to {reverse_path}")
 
     # Print sample of vocabulary
-    print("\nSample of vocabulary:")
+    print("\nSample of vocabulary (gloss -> idx):")
     sample_items = list(gloss_to_idx.items())[:10]
     for gloss, idx in sample_items:
         print(f"  {gloss}: {idx}")
+
+    print("\nSample of reverse mapping (idx -> gloss):")
+    sample_items = list(idx_to_gloss.items())[:10]
+    for idx, gloss in sample_items:
+        print(f"  {idx}: {gloss}")
 
 if __name__ == '__main__':
     main()

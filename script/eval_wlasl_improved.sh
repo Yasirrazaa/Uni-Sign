@@ -8,6 +8,9 @@ checkpoint_type=${2:-"rgb"}  # Options: rgb or pose
 # Set number of classes for WLASL dataset
 num_classes=2000
 
+# Set vocabulary path
+vocab_path="data/WLASL/gloss_vocab.json"
+
 # Always use future masking for improved models
 use_future_mask="true"
 
@@ -40,6 +43,7 @@ deepspeed --include localhost:0 --master_port 29511 fine_tuning.py \
    --task ISLR \
    --max_length 64 \
    --num_classes $num_classes \
+   --vocab_path $vocab_path \
    --eval \
    $rgb_flag \
    $mask_flag

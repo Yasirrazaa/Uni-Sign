@@ -20,6 +20,9 @@ fi
 # Set number of classes for WLASL dataset
 num_classes=2000
 
+# Set vocabulary path
+vocab_path="data/WLASL/gloss_vocab.json"
+
 # Always use future masking for improved temporal understanding
 mask_flag="--use_future_mask"
 
@@ -46,6 +49,7 @@ deepspeed --include localhost:0 --master_port 29511 fine_tuning.py \
     --max_length 64 \
     --dropout 0.3 \
     --num_classes $num_classes \
+    --vocab_path $vocab_path \
     $rgb_flag \
     $mask_flag \
     $mixup_flag \

@@ -8,6 +8,9 @@ use_future_mask=${2:-"false"}
 # Set number of classes for WLASL dataset
 num_classes=2000
 
+# Set vocabulary path
+vocab_path="data/WLASL/gloss_vocab.json"
+
 # Set up future masking flag
 if [ "$use_future_mask" = "true" ]; then
     echo "Evaluating with future masking"
@@ -33,6 +36,7 @@ deepspeed --include localhost:0 --master_port 29511 fine_tuning.py \
    --task ISLR \
    --max_length 64 \
    --num_classes $num_classes \
+   --vocab_path $vocab_path \
    --eval \
    --rgb_support \
    $mask_flag

@@ -431,6 +431,10 @@ def get_args_parser():
     parser.add_argument('--num_classes', default=2000, type=int,
                         help='Number of classes for ISLR classification task')
 
+    # Vocabulary path for ISLR task
+    parser.add_argument('--vocab_path', default='data/WLASL/gloss_vocab.json', type=str,
+                        help='Path to vocabulary file for ISLR classification task')
+
     return parser
 
 def init_deepspeed(args, model, optimizer, lr_scheduler):

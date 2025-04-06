@@ -234,29 +234,55 @@ class Uni_Sign(nn.Module):
 
             # Initialize gloss vocabulary for WLASL dataset
             if args.dataset == 'WLASL':
-                # Create a simple mapping for WLASL dataset
-                # This is a fallback when no vocabulary file is available
-                self.gloss_to_idx = {}
-                for i in range(num_classes):
-                    self.gloss_to_idx[str(i)] = i
+                # Set the vocabulary path
+                vocab_path = getattr(args, 'vocab_path', 'data/WLASL/gloss_vocab.json')
+                reverse_path = vocab_path.replace('.json', '_reverse.json')
 
-                # Try to load vocabulary from file if it exists
-                vocab_path = 'data/WLASL/gloss_vocab.json'
+                # Try to load vocabulary from file
                 if os.path.exists(vocab_path):
                     try:
                         import json
                         with open(vocab_path, 'r') as f:
                             self.gloss_to_idx = json.load(f)
-                        print(f"Loaded gloss vocabulary with {len(self.gloss_to_idx)} entries from {vocab_path}")
-                        print("Sample entries:")
-                        sample_items = list(self.gloss_to_idx.items())[:5]
-                        for gloss, idx in sample_items:
+
+                        # Load reverse mapping if available
+                        if os.path.exists(reverse_path):
+                            with open(reverse_path, 'r') as f:
+                                self.idx_to_gloss = json.load(f)
+                                # Convert keys from strings to integers
+                                self.idx_to_gloss = {int(k): v for k, v in self.idx_to_gloss.items()}
+                        else:
+                            # Create reverse mapping
+                            self.idx_to_gloss = {}
+                            for gloss, idx in self.gloss_to_idx.items():
+                                if not gloss.isdigit():  # Skip numeric keys
+                                    self.idx_to_gloss[idx] = gloss
+
+                        print(f"Loaded gloss vocabulary with {len(self.idx_to_gloss)} unique classes and {len(self.gloss_to_idx)} mappings from {vocab_path}")
+                        print("Sample gloss->idx entries:")
+                        sample_items = [(g, i) for g, i in list(self.gloss_to_idx.items())[:10] if not g.isdigit()]
+                        for gloss, idx in sample_items[:5]:
                             print(f"  {gloss}: {idx}")
+
+                        print("Sample idx->gloss entries:")
+                        sample_items = list(self.idx_to_gloss.items())[:5]
+                        for idx, gloss in sample_items:
+                            print(f"  {idx}: {gloss}")
                     except Exception as e:
                         print(f"Error loading gloss vocabulary: {e}")
-                        print("Using default numeric mapping instead")
+                        print("Creating default numeric mapping instead")
+                        self.gloss_to_idx = {}
+                        self.idx_to_gloss = {}
+                        for i in range(num_classes):
+                            self.gloss_to_idx[str(i)] = i
+                            self.idx_to_gloss[i] = str(i)
                 else:
-                    print(f"Warning: Vocabulary file {vocab_path} not found. Using default numeric mapping.")
+                    print(f"Warning: Vocabulary file {vocab_path} not found. Creating default numeric mapping.")
+                    self.gloss_to_idx = {}
+                    self.idx_to_gloss = {}
+                    for i in range(num_classes):
+                        self.gloss_to_idx[str(i)] = i
+                        self.idx_to_gloss[i] = str(i)
 
     def create_future_mask(self, T):
         """Create causal mask for temporal attention"""

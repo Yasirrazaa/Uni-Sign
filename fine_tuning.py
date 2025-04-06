@@ -458,19 +458,54 @@ def evaluate(args, data_loader, model, model_without_ddp, phase):
                 # Convert labels to tensor
                 if hasattr(model_without_ddp, 'gloss_to_idx'):
                     labels = []
+
+                    # Print sample raw labels for debugging
+                    print("\nRaw labels sample:")
+                    for i, gloss in enumerate(tgt_input['gt_gloss'][:5]):
+                        print(f"  {i}: '{gloss}'")
+
                     for gloss in tgt_input['gt_gloss']:
-                        if not gloss or not gloss.strip():
-                            # Handle empty gloss
-                            labels.append(0)
-                        else:
-                            # Split and get first token, defaulting to 0 if not found
+                        # Try direct mapping first
+                        if gloss in model_without_ddp.gloss_to_idx:
+                            labels.append(model_without_ddp.gloss_to_idx[gloss])
+                            continue
+
+                        # Try numeric conversion
+                        try:
+                            # If gloss is a number, use it directly
+                            label_idx = int(gloss)
+                            labels.append(label_idx)
+                            continue
+                        except (ValueError, TypeError):
+                            pass
+
+                        # Try lowercase
+                        if gloss and gloss.lower() in model_without_ddp.gloss_to_idx:
+                            labels.append(model_without_ddp.gloss_to_idx[gloss.lower()])
+                            continue
+
+                        # Try first token
+                        if gloss and gloss.strip():
                             gloss_parts = gloss.strip().split()
-                            if gloss_parts:
-                                labels.append(model_without_ddp.gloss_to_idx.get(gloss_parts[0], 0))
-                            else:
-                                labels.append(0)
+                            if gloss_parts and gloss_parts[0] in model_without_ddp.gloss_to_idx:
+                                labels.append(model_without_ddp.gloss_to_idx[gloss_parts[0]])
+                                continue
+
+                            # Try first token lowercase
+                            if gloss_parts and gloss_parts[0].lower() in model_without_ddp.gloss_to_idx:
+                                labels.append(model_without_ddp.gloss_to_idx[gloss_parts[0].lower()])
+                                continue
+
+                        # If all else fails, use 0 and print warning
+                        print(f"Warning: Could not map gloss '{gloss}' to an index")
+                        labels.append(0)
 
                     labels = torch.tensor(labels).cuda()
+
+                    # Print label distribution for debugging
+                    unique_labels = torch.unique(labels)
+                    print(f"\nUnique labels: {len(unique_labels)} out of {len(labels)}")
+                    print(f"First few labels: {labels[:10]}")
                 else:
                     # Handle the case where gt_gloss is a list
                     if isinstance(tgt_input['gt_gloss'], list):
