@@ -24,12 +24,12 @@ test_label_paths = {
 rgb_dirs = {
             "CSL_News": './dataset/CSL_News/rgb_format',
             "CSL_Daily": './dataset/CSL_Daily/sentence-crop',
-            "WLASL": "./dataset/WLASL/rgb_format"
+            "WLASL": "./data/WLASL/rgb_format"
             }
 
 # pose paths
 pose_dirs = {
             "CSL_News": './dataset/CSL_News/pose_format',
             "CSL_Daily": './dataset/CSL_Daily/pose_format',
-            "WLASL": "./dataset/WLASL/pose_format"
+            "WLASL": "./data/WLASL/pose_format"
             }

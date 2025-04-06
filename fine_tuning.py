@@ -423,35 +423,12 @@ def evaluate(args, data_loader, model, model_without_ddp, phase):
         metric_logger.add_meter('top1_acc_pi', utils.SmoothedValue(window_size=1, fmt='{value:.2f}'))
         metric_logger.add_meter('top1_acc_pc', utils.SmoothedValue(window_size=1, fmt='{value:.2f}'))
 
-    # For ISLR task, prepare for collecting predictions and references
+    # For collecting predictions and references
     tgt_pres = []
     tgt_refs = []
 
-    # Debug information
-    print("\nDEBUG - Starting evaluation")
-
     with torch.no_grad():
         for src_input, tgt_input in metric_logger.log_every(data_loader, 10, header):
-            # Debug information for first batch
-            if len(tgt_refs) == 0:
-                print("\nDEBUG - First batch information:")
-                print(f"Keys in src_input: {list(src_input.keys())}")
-                print(f"Keys in tgt_input: {list(tgt_input.keys())}")
-
-                if 'gt_sentence' in tgt_input:
-                    print("\nSample gt_sentence values:")
-                    for i, sent in enumerate(tgt_input['gt_sentence'][:5]):
-                        print(f"  {i}: '{sent}'")
-
-                if 'gt_gloss' in tgt_input:
-                    print("\nSample gt_gloss values:")
-                    for i, gloss in enumerate(tgt_input['gt_gloss'][:5]):
-                        print(f"  {i}: '{gloss}'")
-
-                if 'name_batch' in src_input:
-                    print("\nSample video names:")
-                    for i, name in enumerate(src_input['name_batch'][:5]):
-                        print(f"  {i}: '{name}'")
             # Move inputs to device
             src_input = {k: v.cuda() if isinstance(v, torch.Tensor) else v
                         for k, v in src_input.items()}
@@ -459,106 +436,51 @@ def evaluate(args, data_loader, model, model_without_ddp, phase):
             # Forward pass
             stack_out = model(src_input, tgt_input)
 
-            # Update loss if available
-            if 'loss' in stack_out and stack_out['loss'] is not None:
-                total_loss = stack_out['loss']
-                metric_logger.update(loss=total_loss.item())
+            total_loss = stack_out['loss']
+            metric_logger.update(loss=total_loss.item())
 
-            # Check if stack_out has the required keys for generate
-            if 'inputs_embeds' in stack_out and 'attention_mask' in stack_out:
-                try:
-                    # Generate output - exactly match reference implementation
-                    output = model_without_ddp.generate(stack_out,
-                                                    max_new_tokens=100,
-                                                    num_beams=4,
-                            )
+            output = model_without_ddp.generate(stack_out,
+                                            max_new_tokens=100,
+                                            num_beams=4,
+                    )
 
-                    # Add predictions and references to lists
-                    for i in range(len(output)):
-                        tgt_pres.append(output[i])
-                        # Always use gt_sentence for references, regardless of task
-                        # This matches the reference implementation
-                        tgt_refs.append(tgt_input['gt_sentence'][i])
-                except Exception as e:
-                    print(f"Error during generation: {e}")
-                    # For ISLR task, use logits directly
-                    if args.task == "ISLR" and 'logits' in stack_out:
-                        logits = stack_out['logits']
-                        _, pred_indices = logits.topk(1, dim=1)
-
-                        for i, pred_idx in enumerate(pred_indices.squeeze().cpu().tolist()):
-                            if not isinstance(pred_indices.squeeze().cpu().tolist(), list):
-                                pred_idx = pred_indices.squeeze().cpu().tolist()
-                            tgt_pres.append(str(pred_idx))
-                            tgt_refs.append(tgt_input['gt_sentence'][i])
-            else:
-                # For ISLR task, use logits directly
-                if args.task == "ISLR" and 'logits' in stack_out:
-                    logits = stack_out['logits']
-                    _, pred_indices = logits.topk(1, dim=1)
-
-                    for i, pred_idx in enumerate(pred_indices.squeeze().cpu().tolist()):
-                        if not isinstance(pred_indices.squeeze().cpu().tolist(), list):
-                            pred_idx = pred_indices.squeeze().cpu().tolist()
-                        tgt_pres.append(str(pred_idx))
-                        tgt_refs.append(tgt_input['gt_sentence'][i])
+            for i in range(len(output)):
+                tgt_pres.append(output[i])
+                tgt_refs.append(tgt_input['gt_sentence'][i])
 
 
 
     # Process outputs according to task
-    if len(tgt_pres) > 0 and isinstance(tgt_pres[0], torch.Tensor):
-        # If predictions are tensors (from generate method), decode them
-        tokenizer = model_without_ddp.mt5_tokenizer
-        padding_value = tokenizer.eos_token_id
+    tokenizer = model_without_ddp.mt5_tokenizer
+    padding_value = tokenizer.eos_token_id
 
-        # Pad the first prediction to ensure consistent processing
-        if len(tgt_pres) > 0:
-            pad_tensor = torch.ones(150-len(tgt_pres[0])).cuda() * padding_value
-            tgt_pres[0] = torch.cat((tgt_pres[0], pad_tensor.long()), dim=0)
+    pad_tensor = torch.ones(150-len(tgt_pres[0])).cuda() * padding_value
+    tgt_pres[0] = torch.cat((tgt_pres[0], pad_tensor.long()), dim=0)
 
-        # Pad all predictions and decode them
-        tgt_pres = pad_sequence(tgt_pres, batch_first=True, padding_value=padding_value)
-        tgt_pres = tokenizer.batch_decode(tgt_pres, skip_special_tokens=True)
-    # If predictions are already strings (from logits), no need to decode
+    tgt_pres = pad_sequence(tgt_pres, batch_first=True, padding_value=padding_value)
+    tgt_pres = tokenizer.batch_decode(tgt_pres, skip_special_tokens=True)
 
-    # Compute metrics based on task
-    if args.task == "ISLR":
-        # Use the reference implementation's ISLR metrics
-        from SLRT_metrics import islr_performance
+    # fix mt5 tokenizer bug
+    if args.dataset == 'CSL_Daily' and args.task == "SLT":
+        tgt_pres = [' '.join(list(r.replace(" ",'').replace("\n",''))) for r in tgt_pres]
+        tgt_refs = [' '.join(list(r.replace("，", ',').replace("？","?").replace(" ",''))) for r in tgt_refs]
 
-        # Calculate per-instance and per-class accuracy
+    if args.task == "SLT":
+        bleu_dict, rouge_score = translation_performance(tgt_refs, tgt_pres)
+        for k,v in bleu_dict.items():
+            metric_logger.meters[k].update(v)
+        metric_logger.meters['rouge'].update(rouge_score)
+
+    elif args.task == "ISLR":
         top1_acc_pi, top1_acc_pc = islr_performance(tgt_refs, tgt_pres)
-
-        # Update metrics
         metric_logger.meters['top1_acc_pi'].update(top1_acc_pi)
         metric_logger.meters['top1_acc_pc'].update(top1_acc_pc)
 
-        # Print detailed results
-        print("\nDetailed Evaluation Results:")
-        print(f"Per-instance accuracy: {top1_acc_pi:.2f}%")
-        print(f"Per-class accuracy: {top1_acc_pc:.2f}%")
-
-        # Print prediction distribution
-        pred_counts = {}
-        for pred in tgt_pres:
-            pred_counts[pred] = pred_counts.get(pred, 0) + 1
-
-        print("\nPrediction Distribution:")
-        print(f"Number of unique predictions: {len(pred_counts)}")
-        if pred_counts:
-            most_common_pred = max(pred_counts.items(), key=lambda x: x[1])
-            print(f"Most common prediction: '{most_common_pred[0]}' ({most_common_pred[1]} times, {most_common_pred[1]*100/len(tgt_pres):.2f}% of all predictions)")
-
-        # Print label distribution
-        ref_counts = {}
-        for ref in tgt_refs:
-            ref_counts[ref] = ref_counts.get(ref, 0) + 1
-
-        print("\nLabel Distribution:")
-        print(f"Number of unique labels: {len(ref_counts)}")
-        if ref_counts:
-            most_common_label = max(ref_counts.items(), key=lambda x: x[1])
-            print(f"Most common label: '{most_common_label[0]}' ({most_common_label[1]} times, {most_common_label[1]*100/len(tgt_refs):.2f}% of all labels)")
+    elif args.task == "CSLR":
+        wer_results = wer_list(hypotheses=tgt_pres, references=tgt_refs)
+        print(wer_results)
+        for k,v in wer_results.items():
+            metric_logger.meters[k].update(v)
 
     # Save predictions and references to file if in evaluation mode
     if utils.is_main_process() and utils.get_world_size() == 1 and args.eval:
