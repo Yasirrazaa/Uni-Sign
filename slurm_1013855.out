@@ -1,0 +1,139 @@
+### Starting TaskPrologue of job 1013855 on tg097 at Sat 22 Mar 2025 01:25:17 AM CET
+Running on cores 0-15 with governor ondemand
+Sat Mar 22 01:25:17 2025       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 570.124.06             Driver Version: 570.124.06     CUDA Version: 12.8     |
+|-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA A100-SXM4-40GB          On  |   00000000:01:00.0 Off |                    0 |
+| N/A   41C    P0             54W /  400W |       1MiB /  40960MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+|   1  NVIDIA A100-SXM4-40GB          On  |   00000000:C1:00.0 Off |                    0 |
+| N/A   41C    P0             57W /  400W |       1MiB /  40960MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+                                                                                         
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+### Finished TaskPrologue
+
+[07;1;31;43m WARNING: You are over quota on at least one filesystem![0m
+    Path              Used     SoftQ    HardQ    Gracetime  Filecount  FileQuota  FileHardQ  FileGrace    
+[07;1;31;43m!!! /home/hpc          199.4G   104.9G   209.7G  -29543days      63K     500K   1,000K        N/A !!![0m
+Python Path: /home/woody/iwi5/iwi5286h/software/private/conda/envs/wlasl/bin/python
+CUDA Path: /usr/local/cuda/bin/nvcc
+CUDA Home: /usr/local/cuda
+CUDA Version: nvcc: NVIDIA (R) Cuda compiler driver
+Copyright (c) 2005-2025 NVIDIA Corporation
+Built on Fri_Feb_21_20:23:50_PST_2025
+Cuda compilation tools, release 12.8, V12.8.93
+Build cuda_12.8.r12.8/compiler.35583870_0
+CUDA_HOME: /usr/local/cuda
+LD_LIBRARY_PATH: /usr/local/cuda/lib64:/apps/SPACK/0.18.1/opt/linux-ubuntu20.04-broadwell/gcc-9.4.0/cudnn-9.2.1.18_cuda12-446utzlpgn6l3wq3oduiiw3fgdhbep25/lib:/apps/SPACK/0.18.1/opt/linux-ubuntu20.04-broadwell/gcc-9.4.0/cuda-12.6.1-d2nmb46w32wj3tv6wlmbfgaayivk7vjw/lib64
+Sat Mar 22 01:25:20 2025       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 570.124.06             Driver Version: 570.124.06     CUDA Version: 12.8     |
+|-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA A100-SXM4-40GB          On  |   00000000:01:00.0 Off |                    0 |
+| N/A   41C    P0             55W /  400W |       1MiB /  40960MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+|   1  NVIDIA A100-SXM4-40GB          On  |   00000000:C1:00.0 Off |                    0 |
+| N/A   42C    P0             79W /  400W |       1MiB /  40960MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+                                                                                         
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+MASTER_ADDR=127.0.0.1
+MASTER_PORT=13855
+WORLD_SIZE=2
+CUDA_VISIBLE_DEVICES=0,1
+SLURM_NTASKS=2
+SLURM_NODELIST=tg097
+Using Pose-only checkpoint
+[2025-03-22 01:25:31,677] [WARNING] [real_accelerator.py:181:get_accelerator] Setting accelerator to CPU. If you have GPU or other accelerator, we were unable to detect it.
+[2025-03-22 01:25:31,677] [WARNING] [real_accelerator.py:181:get_accelerator] Setting accelerator to CPU. If you have GPU or other accelerator, we were unable to detect it.
+[2025-03-22 01:25:31,699] [INFO] [real_accelerator.py:222:get_accelerator] Setting ds_accelerator to cpu (auto detect)
+[2025-03-22 01:25:31,699] [INFO] [real_accelerator.py:222:get_accelerator] Setting ds_accelerator to cpu (auto detect)
+[2025-03-22 01:25:46,162] [WARNING] [runner.py:215:fetch_hostfile] Unable to find hostfile, will proceed with training with local resources only.
+[2025-03-22 01:25:46,162] [WARNING] [runner.py:215:fetch_hostfile] Unable to find hostfile, will proceed with training with local resources only.
+Detected VISIBLE_DEVICES=0,1: setting --include=localhost:0,1
+[2025-03-22 01:25:46,169] [INFO] [runner.py:607:main] cmd = /home/woody/iwi5/iwi5286h/software/private/conda/envs/wlasl/bin/python -u -m deepspeed.launcher.launch --world_info=eyJsb2NhbGhvc3QiOiBbMCwgMV19 --master_addr=127.0.0.1 --master_port=29500 --enable_each_rank_log=None finetune_wlasl.py --deepspeed_config Uni-Sign/ds_config.json --batch-size 8 --gradient-accumulation-steps 1 --epochs 20 --opt AdamW --lr 5e-5 --warmup-epochs 2 --output_dir outputs/wlasl_finetuning --finetune wlasl_pose_only_islr.pth --dataset WLASL --task ISLR --max_length 64 --num_classes 2000 --local_rank 0
+Detected VISIBLE_DEVICES=0,1: setting --include=localhost:0,1
+[2025-03-22 01:25:46,169] [INFO] [runner.py:607:main] cmd = /home/woody/iwi5/iwi5286h/software/private/conda/envs/wlasl/bin/python -u -m deepspeed.launcher.launch --world_info=eyJsb2NhbGhvc3QiOiBbMCwgMV19 --master_addr=127.0.0.1 --master_port=29500 --enable_each_rank_log=None finetune_wlasl.py --deepspeed_config Uni-Sign/ds_config.json --batch-size 8 --gradient-accumulation-steps 1 --epochs 20 --opt AdamW --lr 5e-5 --warmup-epochs 2 --output_dir outputs/wlasl_finetuning --finetune wlasl_pose_only_islr.pth --dataset WLASL --task ISLR --max_length 64 --num_classes 2000 --local_rank 0
+[2025-03-22 01:25:48,815] [WARNING] [real_accelerator.py:181:get_accelerator] Setting accelerator to CPU. If you have GPU or other accelerator, we were unable to detect it.
+[2025-03-22 01:25:48,815] [WARNING] [real_accelerator.py:181:get_accelerator] Setting accelerator to CPU. If you have GPU or other accelerator, we were unable to detect it.
+[2025-03-22 01:25:48,829] [INFO] [real_accelerator.py:222:get_accelerator] Setting ds_accelerator to cpu (auto detect)
+[2025-03-22 01:25:48,832] [INFO] [real_accelerator.py:222:get_accelerator] Setting ds_accelerator to cpu (auto detect)
+[2025-03-22 01:25:51,995] [INFO] [launch.py:139:main] 0 NCCL_DEBUG_SUBSYS=ALL
+[2025-03-22 01:25:51,995] [INFO] [launch.py:139:main] 0 NCCL_DEBUG=INFO
+[2025-03-22 01:25:51,995] [INFO] [launch.py:146:main] WORLD INFO DICT: {'localhost': [0, 1]}
+[2025-03-22 01:25:51,995] [INFO] [launch.py:152:main] nnodes=1, num_local_procs=2, node_rank=0
+[2025-03-22 01:25:51,995] [INFO] [launch.py:163:main] global_rank_mapping=defaultdict(<class 'list'>, {'localhost': [0, 1]})
+[2025-03-22 01:25:51,995] [INFO] [launch.py:164:main] dist_world_size=2
+[2025-03-22 01:25:51,995] [INFO] [launch.py:139:main] 0 NCCL_DEBUG_SUBSYS=ALL
+[2025-03-22 01:25:51,995] [INFO] [launch.py:168:main] Setting CUDA_VISIBLE_DEVICES=0,1
+[2025-03-22 01:25:51,995] [INFO] [launch.py:139:main] 0 NCCL_DEBUG=INFO
+[2025-03-22 01:25:51,995] [INFO] [launch.py:146:main] WORLD INFO DICT: {'localhost': [0, 1]}
+[2025-03-22 01:25:51,996] [INFO] [launch.py:152:main] nnodes=1, num_local_procs=2, node_rank=0
+[2025-03-22 01:25:51,996] [INFO] [launch.py:163:main] global_rank_mapping=defaultdict(<class 'list'>, {'localhost': [0, 1]})
+[2025-03-22 01:25:51,996] [INFO] [launch.py:164:main] dist_world_size=2
+[2025-03-22 01:25:51,996] [INFO] [launch.py:168:main] Setting CUDA_VISIBLE_DEVICES=0,1
+[2025-03-22 01:25:51,996] [INFO] [launch.py:256:main] process 3499102 spawned with command: ['/home/woody/iwi5/iwi5286h/software/private/conda/envs/wlasl/bin/python', '-u', 'finetune_wlasl.py', '--local_rank=0', '--deepspeed_config', 'Uni-Sign/ds_config.json', '--batch-size', '8', '--gradient-accumulation-steps', '1', '--epochs', '20', '--opt', 'AdamW', '--lr', '5e-5', '--warmup-epochs', '2', '--output_dir', 'outputs/wlasl_finetuning', '--finetune', 'wlasl_pose_only_islr.pth', '--dataset', 'WLASL', '--task', 'ISLR', '--max_length', '64', '--num_classes', '2000', '--local_rank', '0']
+[2025-03-22 01:25:51,997] [INFO] [launch.py:256:main] process 3499103 spawned with command: ['/home/woody/iwi5/iwi5286h/software/private/conda/envs/wlasl/bin/python', '-u', 'finetune_wlasl.py', '--local_rank=0', '--deepspeed_config', 'Uni-Sign/ds_config.json', '--batch-size', '8', '--gradient-accumulation-steps', '1', '--epochs', '20', '--opt', 'AdamW', '--lr', '5e-5', '--warmup-epochs', '2', '--output_dir', 'outputs/wlasl_finetuning', '--finetune', 'wlasl_pose_only_islr.pth', '--dataset', 'WLASL', '--task', 'ISLR', '--max_length', '64', '--num_classes', '2000', '--local_rank', '0']
+[2025-03-22 01:25:51,997] [INFO] [launch.py:256:main] process 3499104 spawned with command: ['/home/woody/iwi5/iwi5286h/software/private/conda/envs/wlasl/bin/python', '-u', 'finetune_wlasl.py', '--local_rank=1', '--deepspeed_config', 'Uni-Sign/ds_config.json', '--batch-size', '8', '--gradient-accumulation-steps', '1', '--epochs', '20', '--opt', 'AdamW', '--lr', '5e-5', '--warmup-epochs', '2', '--output_dir', 'outputs/wlasl_finetuning', '--finetune', 'wlasl_pose_only_islr.pth', '--dataset', 'WLASL', '--task', 'ISLR', '--max_length', '64', '--num_classes', '2000', '--local_rank', '0']
+[2025-03-22 01:25:52,007] [INFO] [launch.py:256:main] process 3499105 spawned with command: ['/home/woody/iwi5/iwi5286h/software/private/conda/envs/wlasl/bin/python', '-u', 'finetune_wlasl.py', '--local_rank=1', '--deepspeed_config', 'Uni-Sign/ds_config.json', '--batch-size', '8', '--gradient-accumulation-steps', '1', '--epochs', '20', '--opt', 'AdamW', '--lr', '5e-5', '--warmup-epochs', '2', '--output_dir', 'outputs/wlasl_finetuning', '--finetune', 'wlasl_pose_only_islr.pth', '--dataset', 'WLASL', '--task', 'ISLR', '--max_length', '64', '--num_classes', '2000', '--local_rank', '0']
+[2025-03-22 01:25:54,636] [WARNING] [real_accelerator.py:181:get_accelerator] Setting accelerator to CPU. If you have GPU or other accelerator, we were unable to detect it.
+[2025-03-22 01:25:54,637] [WARNING] [real_accelerator.py:181:get_accelerator] Setting accelerator to CPU. If you have GPU or other accelerator, we were unable to detect it.
+[2025-03-22 01:25:54,638] [WARNING] [real_accelerator.py:181:get_accelerator] Setting accelerator to CPU. If you have GPU or other accelerator, we were unable to detect it.
+[2025-03-22 01:25:54,641] [WARNING] [real_accelerator.py:181:get_accelerator] Setting accelerator to CPU. If you have GPU or other accelerator, we were unable to detect it.
+[2025-03-22 01:25:54,651] [INFO] [real_accelerator.py:222:get_accelerator] Setting ds_accelerator to cpu (auto detect)
+[2025-03-22 01:25:54,652] [INFO] [real_accelerator.py:222:get_accelerator] Setting ds_accelerator to cpu (auto detect)
+[2025-03-22 01:25:54,652] [INFO] [real_accelerator.py:222:get_accelerator] Setting ds_accelerator to cpu (auto detect)
+[2025-03-22 01:25:54,656] [INFO] [real_accelerator.py:222:get_accelerator] Setting ds_accelerator to cpu (auto detect)
+[2025-03-22 01:26:00,006] [INFO] [launch.py:319:sigkill_handler] Killing subprocess 3499102
+[2025-03-22 01:26:00,016] [INFO] [launch.py:319:sigkill_handler] Killing subprocess 3499103
+[2025-03-22 01:26:00,016] [INFO] [launch.py:319:sigkill_handler] Killing subprocess 3499105
+[2025-03-22 01:26:00,032] [INFO] [launch.py:319:sigkill_handler] Killing subprocess 3499104
+[2025-03-22 01:26:00,032] [ERROR] [launch.py:325:sigkill_handler] ['/home/woody/iwi5/iwi5286h/software/private/conda/envs/wlasl/bin/python', '-u', 'finetune_wlasl.py', '--local_rank=1', '--deepspeed_config', 'Uni-Sign/ds_config.json', '--batch-size', '8', '--gradient-accumulation-steps', '1', '--epochs', '20', '--opt', 'AdamW', '--lr', '5e-5', '--warmup-epochs', '2', '--output_dir', 'outputs/wlasl_finetuning', '--finetune', 'wlasl_pose_only_islr.pth', '--dataset', 'WLASL', '--task', 'ISLR', '--max_length', '64', '--num_classes', '2000', '--local_rank', '0'] exits with return code = 1
+[2025-03-22 01:26:00,038] [ERROR] [launch.py:325:sigkill_handler] ['/home/woody/iwi5/iwi5286h/software/private/conda/envs/wlasl/bin/python', '-u', 'finetune_wlasl.py', '--local_rank=1', '--deepspeed_config', 'Uni-Sign/ds_config.json', '--batch-size', '8', '--gradient-accumulation-steps', '1', '--epochs', '20', '--opt', 'AdamW', '--lr', '5e-5', '--warmup-epochs', '2', '--output_dir', 'outputs/wlasl_finetuning', '--finetune', 'wlasl_pose_only_islr.pth', '--dataset', 'WLASL', '--task', 'ISLR', '--max_length', '64', '--num_classes', '2000', '--local_rank', '0'] exits with return code = 1
+=== JOB_STATISTICS ===
+=== current date     : Sat 22 Mar 2025 01:26:01 AM CET
+= Job-ID             : 1013855 on tinygpu
+= Job-Name           : wlasl_train
+= Job-Command        : /home/woody/iwi5/iwi5286h/sign_language2/Uni-Sign/train_wlasl_slurm.sh
+= Initial workdir    : /home/woody/iwi5/iwi5286h/sign_language2/Uni-Sign
+= Queue/Partition    : a100
+= Slurm account      : iwi5 with QOS=normal
+= Requested resources:  for 20:00:00
+= Elapsed runtime    : 00:00:47
+= Total RAM usage    : 0.8 GiB of requested  GiB (%)   
+= Node list          : tg097
+= Subm/Elig/Start/End: 2025-03-21T17:02:03 / 2025-03-21T17:02:03 / 2025-03-22T01:25:14 / 2025-03-22T01:26:01
+======================
+=== Quota infos ======
+    Path              Used     SoftQ    HardQ    Gracetime  Filec    FileQ    FiHaQ    FileGrace    
+!!! /home/hpc          199.4G   104.9G   209.7G  -29543days      63K     500K   1,000K        N/A !!!
+    /home/woody         67.9G  1000.0G  1500.0G        N/A     328K   5,000K   7,500K        N/A    
+======================
+=== GPU utilization ==
+gpu_name, gpu_bus_id, pid, gpu_utilization [%], mem_utilization [%], max_memory_usage [MiB], time [ms]

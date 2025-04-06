@@ -1,4 +1,6 @@
 import torch
+import torch.nn as nn
+import numpy as np
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader
 from models import Uni_Sign
@@ -16,6 +18,47 @@ from SLRT_metrics import translation_performance, islr_performance, wer_list
 from transformers import get_scheduler
 from config import *
 
+class FocalLoss(nn.Module):
+    def __init__(self, alpha=1, gamma=2, reduction='mean'):
+        super(FocalLoss, self).__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.reduction = reduction
+
+    def forward(self, inputs, targets):
+        ce_loss = nn.CrossEntropyLoss(reduction='none')(inputs, targets)
+        pt = torch.exp(-ce_loss)
+        focal_loss = self.alpha * (1-pt)**self.gamma * ce_loss
+
+        if self.reduction == 'mean':
+            return focal_loss.mean()
+        elif self.reduction == 'sum':
+            return focal_loss.sum()
+        else:
+            return focal_loss
+
+def mixup_data(x, y, alpha=0.2):
+    """
+    Applies mixup augmentation to the batch.
+    """
+    if alpha > 0:
+        lam = np.random.beta(alpha, alpha)
+    else:
+        lam = 1
+
+    batch_size = x.size()[0]
+    index = torch.randperm(batch_size).cuda()
+
+    mixed_x = lam * x + (1 - lam) * x[index, :]
+    y_a, y_b = y, y[index]
+    return mixed_x, y_a, y_b, lam
+
+def mixup_criterion(criterion, pred, y_a, y_b, lam):
+    """
+    Mixup loss function
+    """
+    return lam * criterion(pred, y_a) + (1 - lam) * criterion(pred, y_b)
+
 def main(args):
     utils.init_distributed_mode_ds(args)
 
@@ -23,41 +66,41 @@ def main(args):
     utils.set_seed(args.seed)
 
     print(f"Creating dataset:")
-        
-    train_data = S2T_Dataset(path=train_label_paths[args.dataset], 
+
+    train_data = S2T_Dataset(path=train_label_paths[args.dataset],
                              args=args, phase='train')
     print(train_data)
     train_sampler = torch.utils.data.distributed.DistributedSampler(train_data,shuffle=True)
     train_dataloader = DataLoader(train_data,
-                                 batch_size=args.batch_size, 
-                                 num_workers=args.num_workers, 
+                                 batch_size=args.batch_size,
+                                 num_workers=args.num_workers,
                                  collate_fn=train_data.collate_fn,
-                                 sampler=train_sampler, 
+                                 sampler=train_sampler,
                                  pin_memory=args.pin_mem,
                                  drop_last=True)
-    
-    dev_data = S2T_Dataset(path=dev_label_paths[args.dataset], 
+
+    dev_data = S2T_Dataset(path=dev_label_paths[args.dataset],
                            args=args, phase='dev')
     print(dev_data)
     # dev_sampler = torch.utils.data.distributed.DistributedSampler(dev_data,shuffle=False)
     dev_sampler = torch.utils.data.SequentialSampler(dev_data)
     dev_dataloader = DataLoader(dev_data,
                                 batch_size=args.batch_size,
-                                num_workers=args.num_workers, 
+                                num_workers=args.num_workers,
                                 collate_fn=dev_data.collate_fn,
-                                sampler=dev_sampler, 
+                                sampler=dev_sampler,
                                 pin_memory=args.pin_mem)
-        
-    test_data = S2T_Dataset(path=test_label_paths[args.dataset], 
+
+    test_data = S2T_Dataset(path=test_label_paths[args.dataset],
                             args=args, phase='test')
     print(test_data)
     # test_sampler = torch.utils.data.distributed.DistributedSampler(test_data,shuffle=False)
     test_sampler = torch.utils.data.SequentialSampler(test_data)
     test_dataloader = DataLoader(test_data,
                                  batch_size=args.batch_size,
-                                 num_workers=args.num_workers, 
+                                 num_workers=args.num_workers,
                                  collate_fn=test_data.collate_fn,
-                                 sampler=test_sampler, 
+                                 sampler=test_sampler,
                                  pin_memory=args.pin_mem)
 
     print(f"Creating model:")
@@ -76,10 +119,46 @@ def main(args):
         print('***********************************')
         state_dict = torch.load(args.finetune, map_location='cpu')['model']
 
-        ret = model.load_state_dict(state_dict, strict=True)
+        # For ISLR task with our improved model, use strict=False
+        if args.task == 'ISLR' and (hasattr(model, 'temporal_attention') or
+                                   hasattr(model, 'feature_fusion') or
+                                   hasattr(model, 'islr_classifier')):
+            print('Loading checkpoint with strict=False for improved ISLR model')
+            ret = model.load_state_dict(state_dict, strict=False)
+
+            # Initialize the new components with proper weight initialization
+            if hasattr(model, 'temporal_attention'):
+                print('Initializing temporal attention modules')
+                for mode in model.modes:
+                    if hasattr(model.temporal_attention, mode):
+                        for m in model.temporal_attention[mode].modules():
+                            if isinstance(m, (nn.Linear, nn.Conv1d)):
+                                nn.init.xavier_uniform_(m.weight)
+                                if m.bias is not None:
+                                    nn.init.constant_(m.bias, 0)
+
+            if hasattr(model, 'feature_fusion'):
+                print('Initializing feature fusion module')
+                for m in model.feature_fusion.modules():
+                    if isinstance(m, nn.Linear):
+                        nn.init.xavier_uniform_(m.weight)
+                        if m.bias is not None:
+                            nn.init.constant_(m.bias, 0)
+
+            if hasattr(model, 'islr_classifier'):
+                print('Initializing ISLR classifier')
+                for m in model.islr_classifier.modules():
+                    if isinstance(m, nn.Linear):
+                        nn.init.xavier_uniform_(m.weight)
+                        if m.bias is not None:
+                            nn.init.constant_(m.bias, 0)
+        else:
+            # For other tasks or original model, use strict=True
+            ret = model.load_state_dict(state_dict, strict=True)
+
         print('Missing keys: \n', '\n'.join(ret.missing_keys))
         print('Unexpected keys: \n', '\n'.join(ret.unexpected_keys))
-    
+
     model_without_ddp = model
     if args.distributed:
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
@@ -95,7 +174,7 @@ def main(args):
                 num_warmup_steps=int(args.warmup_epochs * len(train_dataloader)/args.gradient_accumulation_steps),
                 num_training_steps=int(args.epochs * len(train_dataloader)/args.gradient_accumulation_steps),
             )
-    
+
     model, optimizer, lr_scheduler = utils.init_deepspeed(args, model, optimizer, lr_scheduler)
     model_without_ddp = model.module.module
     # print(model_without_ddp)
@@ -107,7 +186,7 @@ def main(args):
     max_accuracy = 0
     if args.task == "CSLR":
         max_accuracy = 1000
-    
+
     if args.eval:
         if utils.is_main_process():
             if args.task != "ISLR":
@@ -116,14 +195,14 @@ def main(args):
             print("📄 test result")
             evaluate(args, test_dataloader, model, model_without_ddp, phase='test')
 
-        return 
+        return
     print(f"Start training for {args.epochs} epochs")
 
     for epoch in range(0, args.epochs):
         if args.distributed:
             train_sampler.set_epoch(epoch)
-        
-        train_stats = train_one_epoch(args, model, train_dataloader, optimizer, epoch)
+
+        train_stats = train_one_epoch(args, model, train_dataloader, optimizer, epoch, model_without_ddp)
 
         if args.output_dir:
             checkpoint_paths = [output_dir / f'checkpoint_{epoch}.pth']
@@ -149,7 +228,7 @@ def main(args):
 
                 print(f"BLEU-4 of the network on the {len(dev_dataloader)} dev videos: {test_stats['bleu4']:.2f}")
                 print(f'Max BLEU-4: {max_accuracy:.2f}%')
-            
+
             elif args.task == "ISLR":
                 if max_accuracy < test_stats["top1_acc_pi"]:
                     max_accuracy = test_stats["top1_acc_pi"]
@@ -162,7 +241,7 @@ def main(args):
 
                 print(f"PI accuracy of the network on the {len(dev_dataloader)} dev videos: {test_stats['top1_acc_pi']:.2f}")
                 print(f'Max PI accuracy: {max_accuracy:.2f}%')
-            
+
             elif args.task == "CSLR":
                 if max_accuracy > test_stats["wer"]:
                     max_accuracy = test_stats["wer"]
@@ -172,25 +251,35 @@ def main(args):
                             utils.save_on_master({
                                 'model': get_requires_grad_dict(model_without_ddp),
                             }, checkpoint_path)
-                            
+
                 print(f"WER of the network on the {len(dev_dataloader)} dev videos: {test_stats['wer']:.2f}")
                 print(f'Min WER: {max_accuracy:.2f}%')
-        
+
             log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                         **{f'test_{k}': v for k, v in test_stats.items()},
                         'epoch': epoch,
                         'n_parameters': n_parameters}
-            
+
         if args.output_dir and utils.is_main_process():
             with (output_dir / "log.txt").open("a") as f:
                 f.write(json.dumps(log_stats) + "\n")
-        
+
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print('Training time {}'.format(total_time_str))
 
-def train_one_epoch(args, model, data_loader, optimizer, epoch):
+def train_one_epoch(args, model, data_loader, optimizer, epoch, model_without_ddp=None):
     model.train()
+
+    # If model_without_ddp is not provided, try to get it from model
+    if model_without_ddp is None:
+        if hasattr(model, 'module'):
+            if hasattr(model.module, 'module'):
+                model_without_ddp = model.module.module
+            else:
+                model_without_ddp = model.module
+        else:
+            model_without_ddp = model
 
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
@@ -210,8 +299,68 @@ def train_one_epoch(args, model, data_loader, optimizer, epoch):
 
         if args.task == "CSLR":
             tgt_input['gt_sentence'] = tgt_input['gt_gloss']
+
+        # Apply mixup if enabled and task is ISLR
+        use_mixup = hasattr(args, 'use_mixup') and args.use_mixup and args.task == 'ISLR'
+        use_focal_loss = hasattr(args, 'use_focal_loss') and args.use_focal_loss and args.task == 'ISLR'
+
+        if use_mixup and 'gt_gloss' in tgt_input and tgt_input['gt_gloss'] is not None and len(tgt_input['gt_gloss']) > 0:
+            # Get input embeddings first
+            with torch.no_grad():
+                # Forward pass to get embeddings
+                temp_out = model(src_input, None)
+                if 'inputs_embeds' in temp_out:
+                    inputs_embeds = temp_out['inputs_embeds']
+                    # Apply mixup to embeddings
+                    labels = tgt_input['gt_gloss']
+                    mixed_embeds, labels_a, labels_b, lam = mixup_data(inputs_embeds, labels, alpha=0.2)
+                    # Replace inputs with mixed version
+                    src_input['mixed_embeds'] = mixed_embeds
+                    tgt_input['mixed_labels_a'] = labels_a
+                    tgt_input['mixed_labels_b'] = labels_b
+                    tgt_input['mixup_lambda'] = lam
+
+        # Forward pass
         stack_out = model(src_input, tgt_input)
-        
+
+        # Get loss
+        if use_focal_loss and args.task == 'ISLR':
+            # Use focal loss for ISLR task
+            if 'logits' in stack_out and tgt_input is not None and 'gt_gloss' in tgt_input:
+                focal_loss = FocalLoss(gamma=2.0)
+                if hasattr(model_without_ddp, 'gloss_to_idx'):
+                    # Convert labels to indices
+                    batch_labels = []
+                    for gloss_str in tgt_input['gt_gloss']:
+                        if not gloss_str or not gloss_str.strip():
+                            # Handle empty gloss
+                            batch_labels.append(0)
+                        else:
+                            # Split and get first token, defaulting to 0 if not found
+                            gloss_tokens = gloss_str.strip().split()
+                            if gloss_tokens and gloss_tokens[0] in model_without_ddp.gloss_to_idx:
+                                batch_labels.append(model_without_ddp.gloss_to_idx[gloss_tokens[0]])
+                            else:
+                                batch_labels.append(0)  # Default to first class
+                    labels = torch.tensor(batch_labels, device=stack_out['logits'].device, dtype=torch.long)
+                else:
+                    # Assume labels are already indices
+                    labels = tgt_input['gt_gloss'].to(stack_out['logits'].device)
+
+                total_loss = focal_loss(stack_out['logits'], labels)
+                stack_out['loss'] = total_loss
+
+        # Apply mixup loss if used
+        if use_mixup and 'mixed_labels_a' in tgt_input and 'mixed_labels_b' in tgt_input:
+            lam = tgt_input['mixup_lambda']
+            loss_fct = nn.CrossEntropyLoss()
+            total_loss = mixup_criterion(loss_fct, stack_out['logits'],
+                                        tgt_input['mixed_labels_a'],
+                                        tgt_input['mixed_labels_b'],
+                                        lam)
+            stack_out['loss'] = total_loss
+
+        # Get final loss
         total_loss = stack_out['loss']
         model.backward(total_loss)
         model.step()
@@ -220,7 +369,7 @@ def train_one_epoch(args, model, data_loader, optimizer, epoch):
         if not math.isfinite(loss_value):
             print("Loss is {}, stopping training".format(loss_value))
             sys.exit(1)
-            
+
         metric_logger.update(loss=loss_value)
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
 
@@ -230,84 +379,172 @@ def train_one_epoch(args, model, data_loader, optimizer, epoch):
 
     return  {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
+def compute_topk_accuracy(predictions, targets, k_values):
+    """Computes top-k accuracy for specified k values"""
+    max_k = max(k_values)
+    batch_size = targets.size(0)
+
+    _, pred = predictions.topk(max_k, 1, True, True)
+    pred = pred.t()
+    correct = pred.eq(targets.view(1, -1).expand_as(pred))
+
+    results = {}
+    for k in k_values:
+        correct_k = correct[:k].reshape(-1).float().sum(0, keepdim=True)
+        results[f'top{k}'] = correct_k.mul_(100.0 / batch_size).item()
+
+    return results
+
+class TopKAccuracyMeter:
+    def __init__(self, k_values=(1, 3, 5, 7, 10)):
+        self.k_values = k_values
+        self.reset()
+
+    def reset(self):
+        self.predictions = []
+        self.targets = []
+
+    def update(self, preds, targets):
+        self.predictions.append(preds)
+        self.targets.append(targets)
+
+    def compute(self):
+        all_preds = torch.cat(self.predictions, dim=0)
+        all_targets = torch.cat(self.targets, dim=0)
+        return compute_topk_accuracy(all_preds, all_targets, self.k_values)
+
 def evaluate(args, data_loader, model, model_without_ddp, phase):
     model.eval()
-
     metric_logger = utils.MetricLogger(delimiter="  ")
-    header = 'Test:'
+    header = f'Test: {phase}'
 
-    target_dtype = None
-    if model.bfloat16_enabled():
-        target_dtype = torch.bfloat16
-        
+    # Add accuracy meters
+    for k in (1, 3, 5, 7, 10):
+        metric_logger.add_meter(f'top{k}', utils.SmoothedValue(window_size=1, fmt='{value:.2f}'))
+
+    # Initialize accuracy tracker
+    accuracy_meter = TopKAccuracyMeter()
+
+    # Print model information
+    print("\nModel Information:")
+    if hasattr(model_without_ddp, 'gloss_to_idx'):
+        print(f"Model has gloss_to_idx with {len(model_without_ddp.gloss_to_idx)} entries")
+        print("Sample entries:")
+        sample_items = list(model_without_ddp.gloss_to_idx.items())[:5]
+        for gloss, idx in sample_items:
+            print(f"  {gloss}: {idx}")
+    else:
+        print("Model does not have gloss_to_idx attribute")
+
+    # Print dataset information
+    print("\nDataset Information:")
+    print(f"Number of samples: {len(data_loader.dataset)}")
+
+    # Track prediction distribution
+    prediction_counts = {}
+    label_counts = {}
+
     with torch.no_grad():
-        tgt_pres = []
-        tgt_refs = []
- 
-        for step, (src_input, tgt_input) in enumerate(metric_logger.log_every(data_loader, 10, header)):
-            if target_dtype != None:
-                for key in src_input.keys():
-                    if isinstance(src_input[key], torch.Tensor):
-                        src_input[key] = src_input[key].to(target_dtype).cuda()
-            
-            if args.task == "CSLR":
-                tgt_input['gt_sentence'] = tgt_input['gt_gloss']
-            stack_out = model(src_input, tgt_input)
-            
-            total_loss = stack_out['loss']
-            metric_logger.update(loss=total_loss.item())
-        
-            output = model_without_ddp.generate(stack_out, 
-                                                max_new_tokens=100, 
-                                                num_beams = 4,
-                        )
+        for src_input, tgt_input in metric_logger.log_every(data_loader, 10, header):
+            # Move inputs to device
+            src_input = {k: v.cuda() if isinstance(v, torch.Tensor) else v
+                        for k, v in src_input.items()}
 
-            for i in range(len(output)):
-                tgt_pres.append(output[i])
-                tgt_refs.append(tgt_input['gt_sentence'][i])
+            # Forward pass
+            outputs = model(src_input, tgt_input)
+            logits = outputs['logits']
 
-    tokenizer = model_without_ddp.mt5_tokenizer
-    padding_value = tokenizer.eos_token_id
-    
-    pad_tensor = torch.ones(150-len(tgt_pres[0])).cuda() * padding_value
-    tgt_pres[0] = torch.cat((tgt_pres[0],pad_tensor.long()),dim = 0)
+            if args.task == "ISLR":
+                # Convert labels to tensor
+                if hasattr(model_without_ddp, 'gloss_to_idx'):
+                    labels = []
+                    for gloss in tgt_input['gt_gloss']:
+                        if not gloss or not gloss.strip():
+                            # Handle empty gloss
+                            labels.append(0)
+                        else:
+                            # Split and get first token, defaulting to 0 if not found
+                            gloss_parts = gloss.strip().split()
+                            if gloss_parts:
+                                labels.append(model_without_ddp.gloss_to_idx.get(gloss_parts[0], 0))
+                            else:
+                                labels.append(0)
 
-    tgt_pres = pad_sequence(tgt_pres,batch_first=True,padding_value=padding_value)
-    tgt_pres = tokenizer.batch_decode(tgt_pres, skip_special_tokens=True)
+                    labels = torch.tensor(labels).cuda()
+                else:
+                    # Handle the case where gt_gloss is a list
+                    if isinstance(tgt_input['gt_gloss'], list):
+                        try:
+                            # First try to convert as integers (class indices)
+                            labels = torch.tensor([int(gloss) for gloss in tgt_input['gt_gloss']]).cuda()
+                        except ValueError:
+                            # If that fails, assume they're gloss strings and use first token
+                            print("Warning: Could not convert gloss labels to integers. Using default indices.")
+                            labels = torch.tensor([0 for _ in tgt_input['gt_gloss']]).cuda()
+                    else:
+                        # If it's already a tensor
+                        labels = tgt_input['gt_gloss'].cuda()
 
-    # fix mt5 tokenizer bug
-    if args.dataset == 'CSL_Daily' and args.task == "SLT":
-        tgt_pres = [' '.join(list(r.replace(" ",'').replace("\n",''))) for r in tgt_pres]
-        tgt_refs = [' '.join(list(r.replace("，", ',').replace("？","?").replace(" ",''))) for r in tgt_refs]
+                # Update accuracy meter
+                accuracy_meter.update(logits, labels)
 
-    if args.task == "SLT":
-        bleu_dict, rouge_score = translation_performance(tgt_refs, tgt_pres)
-        for k,v in bleu_dict.items():
-            metric_logger.meters[k].update(v)
-        metric_logger.meters['rouge'].update(rouge_score)
-    
-    elif args.task == "ISLR":
-        top1_acc_pi, top1_acc_pc = islr_performance(tgt_refs, tgt_pres)
-        metric_logger.meters['top1_acc_pi'].update(top1_acc_pi)
-        metric_logger.meters['top1_acc_pc'].update(top1_acc_pc)
-        
-    elif args.task == "CSLR":
-        wer_results = wer_list(hypotheses=tgt_pres, references=tgt_refs)
-        print(wer_results)
-        for k,v in wer_results.items():
-            metric_logger.meters[k].update(v)
+                # Track prediction distribution
+                _, pred_indices = logits.topk(1, dim=1)
+                for pred_idx in pred_indices.cpu().numpy().flatten():
+                    prediction_counts[int(pred_idx)] = prediction_counts.get(int(pred_idx), 0) + 1
 
-    # # gather the stats from all processes
-    # metric_logger.synchronize_between_processes()
-    
-    if utils.is_main_process() and utils.get_world_size() == 1 and args.eval:
-        with open(args.output_dir+f'/{phase}_tmp_pres.txt','w') as f:
-            for i in range(len(tgt_pres)):
-                f.write(tgt_pres[i]+'\n')
-        with open(args.output_dir+f'/{phase}_tmp_refs.txt','w') as f:
-            for i in range(len(tgt_refs)):
-                f.write(tgt_refs[i]+'\n')
-        
+                # Track label distribution
+                for label_idx in labels.cpu().numpy().flatten():
+                    label_counts[int(label_idx)] = label_counts.get(int(label_idx), 0) + 1
+
+    # Compute final metrics
+    accuracy_results = accuracy_meter.compute()
+
+    # Log metrics
+    for k in (1, 3, 5, 7, 10):
+        # For now, we only have per-instance accuracy
+        if f'top{k}' in accuracy_results:
+            metric_logger.meters[f'top{k}'].update(accuracy_results[f'top{k}'], n=1)
+
+    # Print detailed results
+    print("\nDetailed Evaluation Results:")
+    print("\nAccuracies:")
+    for k in (1, 3, 5, 7, 10):
+        if f'top{k}' in accuracy_results:
+            print(f"Top-{k}: {accuracy_results[f'top{k}']:.2f}%")
+
+    # Print prediction distribution
+    print("\nPrediction Distribution:")
+    print(f"Number of unique predictions: {len(prediction_counts)}")
+    if prediction_counts:
+        most_common_pred = max(prediction_counts.items(), key=lambda x: x[1])
+        print(f"Most common prediction: class {most_common_pred[0]} ({most_common_pred[1]} times, {most_common_pred[1]*100/sum(prediction_counts.values()):.2f}% of all predictions)")
+
+        # Map to gloss if possible
+        if hasattr(model_without_ddp, 'gloss_to_idx'):
+            idx_to_gloss = {idx: gloss for gloss, idx in model_without_ddp.gloss_to_idx.items()}
+            if most_common_pred[0] in idx_to_gloss:
+                print(f"Most common prediction gloss: '{idx_to_gloss[most_common_pred[0]]}'")
+
+    # Print label distribution
+    print("\nLabel Distribution:")
+    print(f"Number of unique labels: {len(label_counts)}")
+    if label_counts:
+        most_common_label = max(label_counts.items(), key=lambda x: x[1])
+        print(f"Most common label: class {most_common_label[0]} ({most_common_label[1]} times, {most_common_label[1]*100/sum(label_counts.values()):.2f}% of all labels)")
+
+        # Map to gloss if possible
+        if hasattr(model_without_ddp, 'gloss_to_idx'):
+            idx_to_gloss = {idx: gloss for gloss, idx in model_without_ddp.gloss_to_idx.items()}
+            if most_common_label[0] in idx_to_gloss:
+                print(f"Most common label gloss: '{idx_to_gloss[most_common_label[0]]}'")
+
+    # Save detailed results if in evaluation mode
+    if args.eval and utils.is_main_process():
+        results_path = os.path.join(args.output_dir, f'{phase}_detailed_results.json')
+        with open(results_path, 'w') as f:
+            json.dump(accuracy_results, f, indent=4)
+
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
 if __name__ == '__main__':

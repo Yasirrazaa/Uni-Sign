@@ -25,17 +25,9 @@ import pickle
 import gzip
 
 
-# global definition
-import deepspeed
-
-import torch
-import torch.nn.functional as F
 from torch import Tensor
 import argparse
 import torch.backends.cudnn as cudnn
-
-import deepspeed.comm as dist
-from deepspeed.accelerator import get_accelerator
 
 
 class SmoothedValue(object):
@@ -71,24 +63,32 @@ class SmoothedValue(object):
 
     @property
     def median(self):
+        if len(self.deque) == 0:
+            return 0.0
         d = torch.tensor(list(self.deque))
         return d.median().item()
 
     @property
     def avg(self):
+        if len(self.deque) == 0:
+            return 0.0
         d = torch.tensor(list(self.deque), dtype=torch.float32)
         return d.mean().item()
 
     @property
     def global_avg(self):
-        return self.total / self.count
+        return self.total / self.count if self.count > 0 else 0.0
 
     @property
     def max(self):
+        if len(self.deque) == 0:
+            return 0.0
         return max(self.deque)
 
     @property
     def value(self):
+        if len(self.deque) == 0:
+            return 0.0
         return self.deque[-1]
 
     def __str__(self):
@@ -262,6 +262,7 @@ def init_distributed_mode(args):
     setup_for_distributed(args.rank == 0)
 
 def init_distributed_mode_ds(args):
+    """Initialize distributed training mode for DeepSpeed."""
     if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
         args.rank = int(os.environ["RANK"])
         args.world_size = int(os.environ['WORLD_SIZE'])
@@ -275,15 +276,12 @@ def init_distributed_mode_ds(args):
         return
 
     args.distributed = True
-
     torch.cuda.set_device(args.gpu)
     args.dist_backend = 'nccl'
-    print('| distributed init (rank {}): {}'.format(
-        args.rank, args.dist_url), flush=True)
-    # torch.distributed.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
-    #                                      world_size=args.world_size, rank=args.rank)
-    deepspeed.init_distributed()
-    torch.distributed.barrier()
+    print('| distributed init (rank {}): {}'.format(args.rank, args.dist_url), flush=True)
+    dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
+                          world_size=args.world_size, rank=args.rank)
+    dist.barrier()
     setup_for_distributed(args.rank == 0)
 
 def sampler_func(clip, sn, random_choice=True):
@@ -331,102 +329,9 @@ def concat_all_gather(tensor):
     tensors_gather = [torch.ones_like(tensor)
         for _ in range(torch.distributed.get_world_size())]
     torch.distributed.all_gather(tensors_gather, tensor, async_op=False)
-    
+
     output = torch.cat(tensors_gather,dim=0)
     return output
-
-def get_train_ds_config(offload,
-                        dtype,
-                        stage=2,
-                        enable_hybrid_engine=False,
-                        inference_tp_size=1,
-                        release_inference_cache=False,
-                        pin_parameters=True,
-                        tp_gather_partition_size=8,
-                        max_out_tokens=512,
-                        enable_tensorboard=False,
-                        enable_mixed_precision_lora=False,
-                        tb_path="",
-                        tb_name="",
-                        args=''):
-
-    device = "cpu" if offload else "none"
-    data_type = "fp16"
-    dtype_config = {"enabled": False}
-
-    if dtype == "fp16":
-        data_type = "fp16"
-        dtype_config = {"enabled": True, "loss_scale_window": 100}
-    elif dtype == "bf16":
-        data_type = "bfloat16"
-        dtype_config = {"enabled": True}
-    zero_opt_dict = {
-        "stage": stage,
-        "offload_param": {
-            "device": device
-        },
-        "offload_optimizer": {
-            "device": device
-        },
-        "stage3_param_persistence_threshold": 1e4,
-        "stage3_max_live_parameters": 3e7,
-        "stage3_prefetch_bucket_size": 3e7,
-        "memory_efficient_linear": False
-    }
-    
-    if enable_mixed_precision_lora:
-        zero_opt_dict["zero_quantized_nontrainable_weights"] = True
-        if dist.get_world_size() != get_accelerator().device_count():
-            zero_opt_dict["zero_hpz_partition_size"] = get_accelerator(
-            ).device_count()
-    return {
-        "steps_per_print": 10,
-        "zero_optimization": zero_opt_dict,
-        data_type: dtype_config,
-        "gradient_clipping": 1.0,
-        "prescale_gradients": False,
-        "wall_clock_breakdown": False,
-        "hybrid_engine": {
-            "enabled": enable_hybrid_engine,
-            "max_out_tokens": max_out_tokens,
-            "inference_tp_size": inference_tp_size,
-            "release_inference_cache": release_inference_cache,
-            "pin_parameters": pin_parameters,
-            "tp_gather_partition_size": tp_gather_partition_size,
-        },
-        "tensorboard": {
-            "enabled": enable_tensorboard,
-            "output_path": f"{tb_path}/ds_tensorboard_logs/",
-            "job_name": f"{tb_name}_tensorboard"
-        },
-    }
-
-def init_deepspeed(args, model, optimizer, lr_scheduler):
-
-    ds_config = get_train_ds_config(
-        offload=args.offload,
-        dtype=args.dtype,
-        stage=args.zero_stage,
-        args=args
-    )
-
-    ds_config['train_micro_batch_size_per_gpu'] = args.batch_size
-    ds_config['gradient_accumulation_steps'] = args.gradient_accumulation_steps
-    ds_config['gradient_clipping'] = args.gradient_clipping
-
-    use_deepspeed = True
-    if use_deepspeed:
-        print("Using deepspeed to train...")
-        print("Initializing deepspeed...")
-        _wrapped_model, _optimizer, _, _lr_sched = deepspeed.initialize(
-            model=model,
-            optimizer=optimizer,
-            args=args,
-            config=ds_config,
-            lr_scheduler=lr_scheduler,
-            dist_init_required=True)
-    
-    return _wrapped_model, _optimizer, _lr_sched
 
 def set_seed(seed):
     torch.manual_seed(seed)
@@ -435,7 +340,7 @@ def set_seed(seed):
 
     np.random.seed(seed)
     random.seed(seed)
-    
+
     cudnn.deterministic = True # Since the input dim is dynamic.
     cudnn.benchmark = False # Since the input dim is dynamic.
 
@@ -450,8 +355,7 @@ def get_args_parser():
     parser.add_argument('--world_size', default=1, type=int,
                         help='number of distributed processes')
     parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
-    parser.add_argument('--local_rank', default=0, type=int)
-    parser.add_argument('--local-rank', default=0, type=int)
+    parser.add_argument('--local_rank', type=int, default=-1, help='Local rank passed from distributed launcher')
     parser.add_argument("--hidden_dim", default=256, type=int)
 
     # * Finetuning params
@@ -470,7 +374,7 @@ def get_args_parser():
                         help='SGD momentum (default: 0.9)')
     parser.add_argument('--weight-decay', type=float, default=0.0001,
                         help='weight decay (default: 0.05)')
-    
+
     parser.add_argument('--sched', default='cosine', type=str, metavar='SCHEDULER',
                         help='LR scheduler (default: "cosine"')
     parser.add_argument('--lr', type=float, default=1.0e-3, metavar='LR',
@@ -492,43 +396,121 @@ def get_args_parser():
                         help='')
     parser.set_defaults(pin_mem=True)
 
-    # deepspeed features
-    parser.add_argument('--offload',
-                        action='store_true',
-                        help='Enable ZeRO Offload techniques.')
-    parser.add_argument('--dtype',
-                        type=str,
-                        default='bf16',
-                        choices=['fp16', 'bf16'],
-                        help='Training data type')
-    parser.add_argument('--zero_stage',
-                        type=int,
-                        default=2,
-                        help='ZeRO optimization stage for Actor model (and clones).')
-    ## low precision
-    parser.add_argument('--compute_fp32_loss',
-                        action='store_true',
-                        help='Relevant for low precision dtypes (fp16, bf16, etc.). '
-                        'If specified, loss is calculated in fp32.')
-    
-    parser.add_argument('--quick_break',
-                        type=int,
-                        default=0,
-                        help='save ckpt per quick_break step')
-    
     # RGB branch
     parser.add_argument('--rgb_support', action='store_true',)
-    
+
     # Pose length
     parser.add_argument("--max_length", default=256, type=int)
-    
+
     # select dataset
     parser.add_argument("--dataset", default="CSL_Daily", choices=['CSL_News', "CSL_Daily", "WLASL"])
-    
+
     # select task
     parser.add_argument("--task", default="SLT", choices=['SLT', "ISLR", "CSLR"])
-    
+
     # select label smooth
     parser.add_argument("--label_smoothing", default=0.2, type=float)
-    
+
+    # Enable future masking
+    parser.add_argument('--use_future_mask', action='store_true',
+                        help='Enable causal/future masking for temporal understanding')
+
+    # Enable mixup augmentation
+    parser.add_argument('--use_mixup', action='store_true',
+                        help='Enable mixup augmentation for better generalization')
+
+    # Enable focal loss
+    parser.add_argument('--use_focal_loss', action='store_true',
+                        help='Enable focal loss to address class imbalance')
+
+    # Dropout rate
+    parser.add_argument('--dropout', default=0.1, type=float,
+                        help='Dropout rate for all dropout layers')
+
+    # Number of classes for ISLR task
+    parser.add_argument('--num_classes', default=2000, type=int,
+                        help='Number of classes for ISLR classification task')
+
     return parser
+
+def init_deepspeed(args, model, optimizer, lr_scheduler):
+    """Initialize DeepSpeed with the given model, optimizer, and learning rate scheduler."""
+    import deepspeed
+    from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
+
+    # Define DeepSpeed configuration
+    ds_config = {
+        "train_batch_size": args.batch_size * args.gradient_accumulation_steps,
+        "gradient_accumulation_steps": args.gradient_accumulation_steps,
+        "optimizer": {
+            "type": "Adam",  # Use standard Adam instead of DeepSpeedCPUAdam
+            "params": {
+                "lr": args.lr,
+                "betas": [0.9, 0.999],
+                "eps": args.opt_eps,
+                "weight_decay": args.weight_decay
+            }
+        },
+        "scheduler": {
+            "type": "WarmupLR",
+            "params": {
+                "warmup_min_lr": 0,
+                "warmup_max_lr": args.lr,
+                "warmup_num_steps": int(args.warmup_epochs * 1000),
+                "warmup_type": "linear"
+            }
+        },
+        "gradient_clipping": args.gradient_clipping,
+        "fp16": {
+            "enabled": False
+        },
+        "zero_optimization": {
+            "stage": 2,
+            "allgather_partitions": True,
+            "allgather_bucket_size": 2e8,
+            "overlap_comm": True,
+            "reduce_scatter": True,
+            "reduce_bucket_size": 2e8,
+            "contiguous_gradients": True
+        }
+    }
+
+    # Initialize DeepSpeed
+    model_engine, optimizer, _, lr_scheduler = deepspeed.initialize(
+        model=model,
+        optimizer=optimizer,
+        config=ds_config,
+        lr_scheduler=lr_scheduler,
+        dist_init_required=True
+    )
+
+    return model_engine, optimizer, lr_scheduler
+
+def plot_topk_accuracies(results, output_dir):
+    """
+    Plot top-k accuracies
+    """
+    import matplotlib.pyplot as plt
+
+    k_values = [1, 3, 5, 7, 10]
+    accuracies = []
+
+    # Get available accuracies
+    for k in k_values:
+        if f'top{k}' in results:
+            accuracies.append(results[f'top{k}'])
+        else:
+            # If not available, use 0
+            accuracies.append(0.0)
+
+    plt.figure(figsize=(10, 6))
+    plt.plot(k_values, accuracies, 'b-o', label='Accuracy')
+    plt.xlabel('k')
+    plt.ylabel('Accuracy (%)')
+    plt.title('Top-k Accuracies')
+    plt.legend()
+    plt.grid(True)
+
+    # Save plot
+    plt.savefig(os.path.join(output_dir, 'topk_accuracies.png'))
+    plt.close()

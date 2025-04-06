@@ -292,32 +292,67 @@ def translation_performance(txt_ref, txt_hyp):
 
     return sableu_dict, float(scores['rouge-l']['f'])
 
-def islr_performance(txt_ref, txt_hyp):
-    true_sample = 0
-    for tgt_pre, tgt_ref in zip(txt_hyp, txt_ref):
-        true_sample += (tgt_pre == tgt_ref)
+def compute_topk_accuracy(logits, labels, k_values=(1, 3, 5, 7, 10)):
+    """
+    Compute top-k accuracy for multiple k values
+    Args:
+        logits: torch.Tensor of shape (batch_size, num_classes)
+        labels: torch.Tensor of shape (batch_size,)
+        k_values: tuple of k values to compute
+    Returns:
+        dict: Dictionary containing top-k accuracies for both PI and PC
+    """
+    batch_size = logits.size(0)
+    max_k = max(k_values)
     
-    top1_acc_pi = true_sample / len(txt_hyp) * 100
-
-    gt_dict = {}
-    pred_dict = {}
-    for tgt_pre, tgt_ref in zip(txt_hyp, txt_ref):
-        if tgt_ref in gt_dict.keys():
-            gt_dict[tgt_ref] += 1
-            pred_dict[tgt_ref] += (tgt_pre == tgt_ref)
-        else:
-            gt_dict[tgt_ref] = 1
-            pred_dict[tgt_ref] = (tgt_pre == tgt_ref)
-
-    mean_acc_pc = []
-    for key in gt_dict.keys():
-        mean_acc_pc.append(pred_dict[key] / gt_dict[key])
-    top1_acc_pc = np.array(mean_acc_pc).mean() * 100
-
-    print(f"top1_acc_pi: {top1_acc_pi:.2f}")
-    print(f"top1_acc_pc: {top1_acc_pc:.2f}")
+    # Get top-k predictions
+    _, pred = logits.topk(max_k, 1, True, True)
+    pred = pred.t()  # transpose to shape (k, batch_size)
+    correct = pred.eq(labels.view(1, -1).expand_as(pred))
     
-    return top1_acc_pi, top1_acc_pc
-   
+    # Initialize results dictionary
+    results = {}
     
-   
+    # Per Instance (PI) accuracy
+    for k in k_values:
+        correct_k = correct[:k].float().sum(0)  # Get correct predictions for each instance
+        results[f'top{k}_acc_pi'] = correct_k.mul_(100.0 / 1).cpu().numpy()  # Accuracy per instance
+        results[f'top{k}_acc_pi_avg'] = correct_k.mean().item()
+    
+    # Per Class (PC) accuracy
+    unique_labels = torch.unique(labels)
+    for k in k_values:
+        class_accuracies = []
+        for cls in unique_labels:
+            cls_mask = labels == cls
+            if cls_mask.any():
+                cls_correct = correct[:k, cls_mask].float().sum(0)
+                cls_acc = cls_correct.mul_(100.0 / cls_mask.sum().item()).mean().item()
+                class_accuracies.append(cls_acc)
+        results[f'top{k}_acc_pc'] = np.array(class_accuracies)
+        results[f'top{k}_acc_pc_avg'] = np.mean(class_accuracies)
+    
+    return results
+
+def islr_performance(logits, labels):
+    """
+    Compute comprehensive ISLR performance metrics
+    Args:
+        logits: Model predictions (batch_size, num_classes)
+        labels: Ground truth labels (batch_size,)
+    Returns:
+        dict: Dictionary containing all metrics
+    """
+    k_values = (1, 3, 5, 7, 10)
+    metrics = compute_topk_accuracy(logits, labels, k_values)
+    
+    # Print detailed results
+    print("\nPer Instance (PI) Accuracies:")
+    for k in k_values:
+        print(f"Top-{k} Accuracy: {metrics[f'top{k}_acc_pi_avg']:.2f}%")
+    
+    print("\nPer Class (PC) Accuracies:")
+    for k in k_values:
+        print(f"Top-{k} Accuracy: {metrics[f'top{k}_acc_pc_avg']:.2f}%")
+    
+    return metrics

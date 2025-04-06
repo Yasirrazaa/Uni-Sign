@@ -158,6 +158,18 @@ def bbox_4hands(left_keypoints, right_keypoints, hw):
 def load_support_rgb_dict(tmp, skeletons, confs, full_path, data_transform):
     support_rgb_dict = {}
     
+    # If RGB file doesn't exist, return empty tensors
+    if not os.path.exists(full_path):
+        print(f"Warning: RGB video not found: {full_path}")
+        support_rgb_dict['left_sampled_indices'] = torch.tensor([-1])
+        support_rgb_dict['left_hands'] = torch.zeros(1, 3, 112, 112)  # image_size is 112
+        support_rgb_dict['left_skeletons_norm'] = torch.zeros(1, 21, 2)
+        
+        support_rgb_dict['right_sampled_indices'] = torch.tensor([-1])
+        support_rgb_dict['right_hands'] = torch.zeros(1, 3, 112, 112)
+        support_rgb_dict['right_skeletons_norm'] = torch.zeros(1, 21, 2)
+        return support_rgb_dict
+    
     confs = np.array(confs)
     skeletons = np.array(skeletons) 
 
@@ -323,14 +335,36 @@ def load_support_rgb_dict(tmp, skeletons, confs, full_path, data_transform):
 
 # use split rgb video for save time
 def load_video_support_rgb(path, tmp):
-    vr = VideoReader(path, num_threads=1, ctx=cpu(0))
-    
-    vr.seek(0)
-    buffer = vr.get_batch(tmp).asnumpy()
-    batch_image = buffer
-    del vr
-
-    return batch_image
+    """Load video frames, handling missing files and invalid indices gracefully"""
+    if not os.path.exists(path):
+        # Return a single black frame if video is missing
+        print(f"Warning: RGB video not found: {path}")
+        return np.zeros((1, 256, 256, 3), dtype=np.uint8)
+        
+    try:
+        vr = VideoReader(path, num_threads=1, ctx=cpu(0))
+        vr.seek(0)
+        video_length = len(vr)
+        
+        # Ensure indices don't exceed video length
+        valid_indices = []
+        for idx in tmp:
+            if idx < video_length:
+                valid_indices.append(idx)
+            else:
+                print(f"Warning: Skipping index {idx} as it exceeds video length {video_length}")
+                
+        if len(valid_indices) == 0:
+            print(f"Warning: No valid frame indices for video {path}")
+            return np.zeros((1, 256, 256, 3), dtype=np.uint8)
+            
+        # Get batch of valid frames
+        buffer = vr.get_batch(valid_indices).asnumpy()
+        del vr
+        return buffer
+    except Exception as e:
+        print(f"Warning: Error loading video {path}: {str(e)}")
+        return np.zeros((1, 256, 256, 3), dtype=np.uint8)
 
 # build base dataset
 class Base_Dataset(Dataset.Dataset):
