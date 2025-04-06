@@ -291,11 +291,17 @@ class Uni_Sign(nn.Module):
                             self.idx_to_gloss[i] = str(i)
                 else:
                     print(f"Warning: Vocabulary file {vocab_path} not found. Creating default numeric mapping.")
+                    # Create a simple numeric mapping for WLASL
+                    # This maps class indices (0-1999) to themselves
                     self.gloss_to_idx = {}
                     self.idx_to_gloss = {}
                     for i in range(num_classes):
-                        self.gloss_to_idx[str(i)] = i
-                        self.idx_to_gloss[i] = str(i)
+                        # Map both string and integer representations
+                        self.gloss_to_idx[str(i)] = i  # String representation (e.g., "42" -> 42)
+                        self.gloss_to_idx[i] = i       # Integer representation (e.g., 42 -> 42)
+                        self.idx_to_gloss[i] = str(i)  # Reverse mapping (e.g., 42 -> "42")
+
+                    print(f"Created default numeric mapping with {num_classes} classes")
 
     def create_future_mask(self, T):
         """Create causal mask for temporal attention"""
