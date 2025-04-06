@@ -9,7 +9,7 @@ import numpy as np
 WER_COST_DEL = 3
 WER_COST_INS = 3
 WER_COST_SUB = 4
- 
+
 
 def chrf(references, hypotheses):
     """
@@ -80,7 +80,7 @@ def sequence_accuracy(references, hypotheses):
     return (correct_sequences / len(hypotheses)) * 100 if hypotheses else 0.0
 
 
-# implement sltunet rouge eval  
+# implement sltunet rouge eval
 def rouge_deprecated(references, hypotheses, level='word'):
     #beta 1.2
     rouge_score = 0
@@ -89,7 +89,7 @@ def rouge_deprecated(references, hypotheses, level='word'):
         #split word
         references = [' '.join(list(r)) for r in references]
         hypotheses = [' '.join(list(r)) for r in hypotheses]
-        
+
     for h, r in zip(hypotheses, references):
         rouge_score += mscoco_rouge.calc_score(hypotheses=[h], references=[r]) / n_seq
 
@@ -249,7 +249,7 @@ def get_alignment(r, h, d):
         alignlist[::-1],
         {"align_ref": align_ref, "align_hyp": align_hyp, "alignment": alignment},
     )
-    
+
 def sableu(references, hypotheses, tokenizer):
     """
     Sacrebleu (with tokenization)
@@ -264,7 +264,7 @@ def sableu(references, hypotheses, tokenizer):
     scores = {}
     for n in range(len(bleu_scores)):
         scores["bleu" + str(n + 1)] = bleu_scores[n]
-        
+
     return scores
 
 def translation_performance(txt_ref, txt_hyp):
@@ -272,22 +272,22 @@ def translation_performance(txt_ref, txt_hyp):
     rouge=SLT_Rouge()
     scores = rouge.get_scores(txt_hyp, txt_ref, avg=True)
     scores['rouge-l']['f'] = scores['rouge-l']['f']*100
-    
+
     tokenizer_args = '13a'
     # print('Signature: BLEU+case.mixed+numrefs.1+smooth.exp+tok.%s+version.1.4.2' % tokenizer_args)
     sableu_dict = sableu(references=txt_ref, hypotheses=txt_hyp, tokenizer=tokenizer_args)
     # print('BLEU', sableu_dict)
     # print('Signature: chrF2+case.mixed+numchars.6+numrefs.1+space.False+version.1.4.2')
     # print('Chrf', chrf(references=txt_ref, hypotheses=txt_hyp))
-   
+
     print(sableu_dict)
     print(f"Rough: {scores['rouge-l']['f']:.2f}")
-   
+
     # res = []
     # for n in range(4):
     #     res.append(f"{sableu_dict['bleu' + str(n + 1)]:.2f}")
     # res.append(f"{scores['rouge-l']['f']:.2f}")
-    
+
     # print(" & ".join(res))
 
     return sableu_dict, float(scores['rouge-l']['f'])
@@ -304,21 +304,21 @@ def compute_topk_accuracy(logits, labels, k_values=(1, 3, 5, 7, 10)):
     """
     batch_size = logits.size(0)
     max_k = max(k_values)
-    
+
     # Get top-k predictions
     _, pred = logits.topk(max_k, 1, True, True)
     pred = pred.t()  # transpose to shape (k, batch_size)
     correct = pred.eq(labels.view(1, -1).expand_as(pred))
-    
+
     # Initialize results dictionary
     results = {}
-    
+
     # Per Instance (PI) accuracy
     for k in k_values:
         correct_k = correct[:k].float().sum(0)  # Get correct predictions for each instance
         results[f'top{k}_acc_pi'] = correct_k.mul_(100.0 / 1).cpu().numpy()  # Accuracy per instance
         results[f'top{k}_acc_pi_avg'] = correct_k.mean().item()
-    
+
     # Per Class (PC) accuracy
     unique_labels = torch.unique(labels)
     for k in k_values:
@@ -331,10 +331,51 @@ def compute_topk_accuracy(logits, labels, k_values=(1, 3, 5, 7, 10)):
                 class_accuracies.append(cls_acc)
         results[f'top{k}_acc_pc'] = np.array(class_accuracies)
         results[f'top{k}_acc_pc_avg'] = np.mean(class_accuracies)
-    
+
     return results
 
-def islr_performance(logits, labels):
+def islr_performance(txt_ref, txt_hyp):
+    """
+    Calculate ISLR performance metrics.
+
+    Args:
+        txt_ref: List of reference labels (ground truth)
+        txt_hyp: List of hypothesis labels (predictions)
+
+    Returns:
+        top1_acc_pi: Per-instance accuracy (percentage of correct predictions)
+        top1_acc_pc: Per-class accuracy (average accuracy across classes)
+    """
+    # Calculate per-instance accuracy
+    true_sample = 0
+    for tgt_pre, tgt_ref in zip(txt_hyp, txt_ref):
+        true_sample += (tgt_pre == tgt_ref)
+
+    top1_acc_pi = true_sample / len(txt_hyp) * 100 if len(txt_hyp) > 0 else 0.0
+
+    # Calculate per-class accuracy
+    gt_dict = {}
+    pred_dict = {}
+    for tgt_pre, tgt_ref in zip(txt_hyp, txt_ref):
+        if tgt_ref in gt_dict.keys():
+            gt_dict[tgt_ref] += 1
+            pred_dict[tgt_ref] += (tgt_pre == tgt_ref)
+        else:
+            gt_dict[tgt_ref] = 1
+            pred_dict[tgt_ref] = (tgt_pre == tgt_ref)
+
+    mean_acc_pc = []
+    for key in gt_dict.keys():
+        mean_acc_pc.append(pred_dict[key] / gt_dict[key])
+    top1_acc_pc = np.array(mean_acc_pc).mean() * 100 if mean_acc_pc else 0.0
+
+    print(f"top1_acc_pi: {top1_acc_pi:.2f}%")
+    print(f"top1_acc_pc: {top1_acc_pc:.2f}%")
+
+    return top1_acc_pi, top1_acc_pc
+
+
+def islr_performance_tensor(logits, labels):
     """
     Compute comprehensive ISLR performance metrics
     Args:
@@ -345,14 +386,14 @@ def islr_performance(logits, labels):
     """
     k_values = (1, 3, 5, 7, 10)
     metrics = compute_topk_accuracy(logits, labels, k_values)
-    
+
     # Print detailed results
     print("\nPer Instance (PI) Accuracies:")
     for k in k_values:
         print(f"Top-{k} Accuracy: {metrics[f'top{k}_acc_pi_avg']:.2f}%")
-    
+
     print("\nPer Class (PC) Accuracies:")
     for k in k_values:
         print(f"Top-{k} Accuracy: {metrics[f'top{k}_acc_pc_avg']:.2f}%")
-    
+
     return metrics

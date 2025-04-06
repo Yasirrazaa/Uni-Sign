@@ -483,27 +483,34 @@ def evaluate(args, data_loader, model, model_without_ddp, phase):
                         # Add prediction
                         batch_preds.append(str(pred_idx))
 
-                        # Process reference label
-                        if gloss in model_without_ddp.gloss_to_idx:
-                            ref_idx = model_without_ddp.gloss_to_idx[gloss]
-                        elif gloss.isdigit():
-                            ref_idx = int(gloss)
+                        # For WLASL, we use the video ID as the reference
+                        # This matches the reference implementation
+                        if args.dataset == 'WLASL':
+                            # Use the video ID as the reference
+                            # The gloss is already the video ID from the dataset
+                            batch_refs.append(gloss)
                         else:
-                            # Try other methods to map gloss to index
-                            if gloss.lower() in model_without_ddp.gloss_to_idx:
-                                ref_idx = model_without_ddp.gloss_to_idx[gloss.lower()]
-                            elif gloss and gloss.strip():
-                                gloss_parts = gloss.strip().split()
-                                if gloss_parts and gloss_parts[0] in model_without_ddp.gloss_to_idx:
-                                    ref_idx = model_without_ddp.gloss_to_idx[gloss_parts[0]]
-                                elif gloss_parts and gloss_parts[0].lower() in model_without_ddp.gloss_to_idx:
-                                    ref_idx = model_without_ddp.gloss_to_idx[gloss_parts[0].lower()]
+                            # For other datasets, try to map gloss to index
+                            if gloss in model_without_ddp.gloss_to_idx:
+                                ref_idx = model_without_ddp.gloss_to_idx[gloss]
+                            elif gloss.isdigit():
+                                ref_idx = int(gloss)
+                            else:
+                                # Try other methods to map gloss to index
+                                if gloss.lower() in model_without_ddp.gloss_to_idx:
+                                    ref_idx = model_without_ddp.gloss_to_idx[gloss.lower()]
+                                elif gloss and gloss.strip():
+                                    gloss_parts = gloss.strip().split()
+                                    if gloss_parts and gloss_parts[0] in model_without_ddp.gloss_to_idx:
+                                        ref_idx = model_without_ddp.gloss_to_idx[gloss_parts[0]]
+                                    elif gloss_parts and gloss_parts[0].lower() in model_without_ddp.gloss_to_idx:
+                                        ref_idx = model_without_ddp.gloss_to_idx[gloss_parts[0].lower()]
+                                    else:
+                                        ref_idx = 0
                                 else:
                                     ref_idx = 0
-                            else:
-                                ref_idx = 0
 
-                        batch_refs.append(str(ref_idx))
+                            batch_refs.append(str(ref_idx))
 
                     # Add batch results to overall results
                     tgt_pres.extend(batch_preds)

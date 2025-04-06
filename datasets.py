@@ -475,38 +475,14 @@ class S2T_Dataset(Base_Dataset):
 
         # Handle gloss for WLASL dataset
         if "WLASL" in self.args.dataset:
-            # Extract class ID from the video path
-            # WLASL video paths typically have format like: "class_id/instance_id.mp4"
+            # For WLASL, we need to use the video ID as the gloss
+            # Extract the video ID from the video path
             video_path = sample['video_path']
-            try:
-                # Extract class ID from path (first part before /)
-                class_id = int(video_path.split('/')[0])
-                gloss = str(class_id)  # Use class ID as gloss
+            video_id = os.path.splitext(os.path.basename(video_path))[0]
 
-                # Try to load class name from wlasl_class_list.txt if available
-                class_list_path = 'wlasl_class_list.txt'
-                if hasattr(self, 'class_names') and self.class_names:
-                    # Use cached class names
-                    if class_id in self.class_names:
-                        gloss = self.class_names[class_id]
-                elif os.path.exists(class_list_path) and not hasattr(self, 'class_names'):
-                    # Load class names from file
-                    self.class_names = {}
-                    try:
-                        with open(class_list_path, 'r') as f:
-                            for line in f:
-                                parts = line.strip().split('\t')
-                                if len(parts) == 2:
-                                    idx, name = parts
-                                    self.class_names[int(idx)] = name
-                        # Now try to get the class name
-                        if class_id in self.class_names:
-                            gloss = self.class_names[class_id]
-                    except Exception as e:
-                        print(f"Warning: Could not load class names from {class_list_path}: {e}")
-            except (ValueError, IndexError) as e:
-                print(f"Warning: Could not extract class ID from video path {video_path}: {e}")
-                gloss = '0'  # Default to class 0
+            # Use the video ID as the gloss
+            # This matches how the reference implementation handles WLASL
+            gloss = video_id
         elif "gloss" in sample.keys():
             gloss = " ".join(sample['gloss'])
         else:
