@@ -418,12 +418,10 @@ def evaluate(args, data_loader, model, model_without_ddp, phase):
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = f'Test: {phase}'
 
-    # Add accuracy meters
-    for k in (1, 3, 5, 7, 10):
-        metric_logger.add_meter(f'top{k}', utils.SmoothedValue(window_size=1, fmt='{value:.2f}'))
-
-    # Initialize accuracy tracker
-    accuracy_meter = TopKAccuracyMeter()
+    # Add accuracy meters for ISLR task
+    if args.task == "ISLR":
+        metric_logger.add_meter('top1_acc_pi', utils.SmoothedValue(window_size=1, fmt='{value:.2f}'))
+        metric_logger.add_meter('top1_acc_pc', utils.SmoothedValue(window_size=1, fmt='{value:.2f}'))
 
     # Print model information
     print("\nModel Information:")
@@ -440,9 +438,10 @@ def evaluate(args, data_loader, model, model_without_ddp, phase):
     print("\nDataset Information:")
     print(f"Number of samples: {len(data_loader.dataset)}")
 
-    # Track prediction distribution
-    prediction_counts = {}
-    label_counts = {}
+    # For ISLR task, prepare for collecting predictions and references
+    if args.task == "ISLR":
+        tgt_pres = []
+        tgt_refs = []
 
     with torch.no_grad():
         for src_input, tgt_input in metric_logger.log_every(data_loader, 10, header):
@@ -455,74 +454,69 @@ def evaluate(args, data_loader, model, model_without_ddp, phase):
             logits = outputs['logits']
 
             if args.task == "ISLR":
-                # Convert labels to tensor
+                # Process labels for ISLR task
                 if hasattr(model_without_ddp, 'gloss_to_idx'):
-                    labels = []
-
                     # Print sample raw labels for debugging
-                    print("\nRaw labels sample:")
-                    for i, gloss in enumerate(tgt_input['gt_gloss'][:10]):
-                        print(f"  {i}: '{gloss}'")
+                    if len(tgt_pres) == 0:  # Only print for the first batch
+                        print("\nRaw labels sample:")
+                        for i, gloss in enumerate(tgt_input['gt_gloss'][:10]):
+                            print(f"  {i}: '{gloss}'")
 
-                    # Check if all labels are empty
-                    empty_count = sum(1 for g in tgt_input['gt_gloss'] if not g or not g.strip())
-                    if empty_count > 0:
-                        print(f"Warning: Found {empty_count} empty labels out of {len(tgt_input['gt_gloss'])}")
+                        # For WLASL dataset, print video paths
+                        if args.dataset == 'WLASL' and 'name_batch' in src_input:
+                            print("\nVideo paths sample:")
+                            for i, name in enumerate(src_input['name_batch'][:5]):
+                                print(f"  {i}: '{name}'")
 
-                    # For WLASL dataset, try to extract class IDs from video paths
-                    if args.dataset == 'WLASL' and 'name_batch' in src_input:
-                        print("\nVideo paths sample:")
-                        for i, name in enumerate(src_input['name_batch'][:5]):
-                            print(f"  {i}: '{name}'")
-                            try:
-                                # Extract class ID from path (first part before /)
-                                class_id = int(name.split('/')[0])
-                                print(f"    Class ID: {class_id}")
-                            except (ValueError, IndexError):
-                                print(f"    Could not extract class ID")
+                    # Process predictions and references
+                    batch_preds = []
+                    batch_refs = []
 
-                    for gloss in tgt_input['gt_gloss']:
-                        # Try direct mapping first
+                    # Get top-1 predictions
+                    _, pred_indices = logits.topk(1, dim=1)
+                    pred_indices = pred_indices.squeeze().cpu().tolist()
+                    if not isinstance(pred_indices, list):
+                        pred_indices = [pred_indices]
+
+                    # Process each prediction and reference
+                    for i, (pred_idx, gloss) in enumerate(zip(pred_indices, tgt_input['gt_gloss'])):
+                        # Add prediction
+                        batch_preds.append(str(pred_idx))
+
+                        # Process reference label
                         if gloss in model_without_ddp.gloss_to_idx:
-                            labels.append(model_without_ddp.gloss_to_idx[gloss])
-                            continue
+                            ref_idx = model_without_ddp.gloss_to_idx[gloss]
+                        elif gloss.isdigit():
+                            ref_idx = int(gloss)
+                        else:
+                            # Try other methods to map gloss to index
+                            if gloss.lower() in model_without_ddp.gloss_to_idx:
+                                ref_idx = model_without_ddp.gloss_to_idx[gloss.lower()]
+                            elif gloss and gloss.strip():
+                                gloss_parts = gloss.strip().split()
+                                if gloss_parts and gloss_parts[0] in model_without_ddp.gloss_to_idx:
+                                    ref_idx = model_without_ddp.gloss_to_idx[gloss_parts[0]]
+                                elif gloss_parts and gloss_parts[0].lower() in model_without_ddp.gloss_to_idx:
+                                    ref_idx = model_without_ddp.gloss_to_idx[gloss_parts[0].lower()]
+                                else:
+                                    ref_idx = 0
+                            else:
+                                ref_idx = 0
 
-                        # Try numeric conversion
-                        try:
-                            # If gloss is a number, use it directly
-                            label_idx = int(gloss)
-                            labels.append(label_idx)
-                            continue
-                        except (ValueError, TypeError):
-                            pass
+                        batch_refs.append(str(ref_idx))
 
-                        # Try lowercase
-                        if gloss and gloss.lower() in model_without_ddp.gloss_to_idx:
-                            labels.append(model_without_ddp.gloss_to_idx[gloss.lower()])
-                            continue
+                    # Add batch results to overall results
+                    tgt_pres.extend(batch_preds)
+                    tgt_refs.extend(batch_refs)
 
-                        # Try first token
-                        if gloss and gloss.strip():
-                            gloss_parts = gloss.strip().split()
-                            if gloss_parts and gloss_parts[0] in model_without_ddp.gloss_to_idx:
-                                labels.append(model_without_ddp.gloss_to_idx[gloss_parts[0]])
-                                continue
+                    # For compatibility with existing code, also create labels tensor
+                    labels = torch.tensor([int(ref) for ref in batch_refs]).cuda()
 
-                            # Try first token lowercase
-                            if gloss_parts and gloss_parts[0].lower() in model_without_ddp.gloss_to_idx:
-                                labels.append(model_without_ddp.gloss_to_idx[gloss_parts[0].lower()])
-                                continue
-
-                        # If all else fails, use 0 and print warning
-                        print(f"Warning: Could not map gloss '{gloss}' to an index")
-                        labels.append(0)
-
-                    labels = torch.tensor(labels).cuda()
-
-                    # Print label distribution for debugging
-                    unique_labels = torch.unique(labels)
-                    print(f"\nUnique labels: {len(unique_labels)} out of {len(labels)}")
-                    print(f"First few labels: {labels[:10]}")
+                    # Print label distribution for debugging (only for first batch)
+                    if len(tgt_pres) <= len(batch_preds):
+                        unique_labels = torch.unique(labels)
+                        print(f"\nUnique labels: {len(unique_labels)} out of {len(labels)}")
+                        print(f"First few labels: {labels[:10]}")
                 else:
                     # Handle the case where gt_gloss is a list
                     if isinstance(tgt_input['gt_gloss'], list):
@@ -537,65 +531,73 @@ def evaluate(args, data_loader, model, model_without_ddp, phase):
                         # If it's already a tensor
                         labels = tgt_input['gt_gloss'].cuda()
 
-                # Update accuracy meter
-                accuracy_meter.update(logits, labels)
+    # Compute final metrics for ISLR task
+    if args.task == "ISLR":
+        # Use the reference implementation's ISLR metrics
+        from SLRT_metrics import islr_performance
 
-                # Track prediction distribution
-                _, pred_indices = logits.topk(1, dim=1)
-                for pred_idx in pred_indices.cpu().numpy().flatten():
-                    prediction_counts[int(pred_idx)] = prediction_counts.get(int(pred_idx), 0) + 1
+        # Calculate per-instance and per-class accuracy
+        top1_acc_pi, top1_acc_pc = islr_performance(tgt_refs, tgt_pres)
 
-                # Track label distribution
-                for label_idx in labels.cpu().numpy().flatten():
-                    label_counts[int(label_idx)] = label_counts.get(int(label_idx), 0) + 1
+        # Update metrics
+        metric_logger.meters['top1_acc_pi'].update(top1_acc_pi, n=1)
+        metric_logger.meters['top1_acc_pc'].update(top1_acc_pc, n=1)
 
-    # Compute final metrics
-    accuracy_results = accuracy_meter.compute()
+        # Print detailed results
+        print("\nDetailed Evaluation Results:")
+        print(f"Per-instance accuracy: {top1_acc_pi:.2f}%")
+        print(f"Per-class accuracy: {top1_acc_pc:.2f}%")
 
-    # Log metrics
-    for k in (1, 3, 5, 7, 10):
-        # For now, we only have per-instance accuracy
-        if f'top{k}' in accuracy_results:
-            metric_logger.meters[f'top{k}'].update(accuracy_results[f'top{k}'], n=1)
+        # Print prediction distribution
+        pred_counts = {}
+        for pred in tgt_pres:
+            pred_counts[pred] = pred_counts.get(pred, 0) + 1
 
-    # Print detailed results
-    print("\nDetailed Evaluation Results:")
-    print("\nAccuracies:")
-    for k in (1, 3, 5, 7, 10):
-        if f'top{k}' in accuracy_results:
-            print(f"Top-{k}: {accuracy_results[f'top{k}']:.2f}%")
+        print("\nPrediction Distribution:")
+        print(f"Number of unique predictions: {len(pred_counts)}")
+        if pred_counts:
+            most_common_pred = max(pred_counts.items(), key=lambda x: x[1])
+            print(f"Most common prediction: class {most_common_pred[0]} ({most_common_pred[1]} times, {most_common_pred[1]*100/len(tgt_pres):.2f}% of all predictions)")
 
-    # Print prediction distribution
-    print("\nPrediction Distribution:")
-    print(f"Number of unique predictions: {len(prediction_counts)}")
-    if prediction_counts:
-        most_common_pred = max(prediction_counts.items(), key=lambda x: x[1])
-        print(f"Most common prediction: class {most_common_pred[0]} ({most_common_pred[1]} times, {most_common_pred[1]*100/sum(prediction_counts.values()):.2f}% of all predictions)")
+            # Map to gloss if possible
+            if hasattr(model_without_ddp, 'gloss_to_idx'):
+                idx_to_gloss = {idx: gloss for gloss, idx in model_without_ddp.gloss_to_idx.items()}
+                if int(most_common_pred[0]) in idx_to_gloss:
+                    print(f"Most common prediction gloss: '{idx_to_gloss[int(most_common_pred[0])]}'")
 
-        # Map to gloss if possible
-        if hasattr(model_without_ddp, 'gloss_to_idx'):
-            idx_to_gloss = {idx: gloss for gloss, idx in model_without_ddp.gloss_to_idx.items()}
-            if most_common_pred[0] in idx_to_gloss:
-                print(f"Most common prediction gloss: '{idx_to_gloss[most_common_pred[0]]}'")
+        # Print label distribution
+        ref_counts = {}
+        for ref in tgt_refs:
+            ref_counts[ref] = ref_counts.get(ref, 0) + 1
 
-    # Print label distribution
-    print("\nLabel Distribution:")
-    print(f"Number of unique labels: {len(label_counts)}")
-    if label_counts:
-        most_common_label = max(label_counts.items(), key=lambda x: x[1])
-        print(f"Most common label: class {most_common_label[0]} ({most_common_label[1]} times, {most_common_label[1]*100/sum(label_counts.values()):.2f}% of all labels)")
+        print("\nLabel Distribution:")
+        print(f"Number of unique labels: {len(ref_counts)}")
+        if ref_counts:
+            most_common_label = max(ref_counts.items(), key=lambda x: x[1])
+            print(f"Most common label: class {most_common_label[0]} ({most_common_label[1]} times, {most_common_label[1]*100/len(tgt_refs):.2f}% of all labels)")
 
-        # Map to gloss if possible
-        if hasattr(model_without_ddp, 'gloss_to_idx'):
-            idx_to_gloss = {idx: gloss for gloss, idx in model_without_ddp.gloss_to_idx.items()}
-            if most_common_label[0] in idx_to_gloss:
-                print(f"Most common label gloss: '{idx_to_gloss[most_common_label[0]]}'")
+            # Map to gloss if possible
+            if hasattr(model_without_ddp, 'gloss_to_idx'):
+                idx_to_gloss = {idx: gloss for gloss, idx in model_without_ddp.gloss_to_idx.items()}
+                if int(most_common_label[0]) in idx_to_gloss:
+                    print(f"Most common label gloss: '{idx_to_gloss[int(most_common_label[0])]}'")
 
     # Save detailed results if in evaluation mode
-    if args.eval and utils.is_main_process():
+    if args.eval and utils.is_main_process() and args.task == "ISLR":
+        # Create results dictionary
+        results = {
+            'top1_acc_pi': top1_acc_pi,
+            'top1_acc_pc': top1_acc_pc,
+            'num_unique_predictions': len(pred_counts),
+            'num_unique_labels': len(ref_counts),
+            'most_common_prediction': most_common_pred[0],
+            'most_common_label': most_common_label[0]
+        }
+
+        # Save results to file
         results_path = os.path.join(args.output_dir, f'{phase}_detailed_results.json')
         with open(results_path, 'w') as f:
-            json.dump(accuracy_results, f, indent=4)
+            json.dump(results, f, indent=4)
 
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
